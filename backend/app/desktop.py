@@ -84,30 +84,83 @@ ABOUT_TEXT = (
 # ---------------------------------------------------------------------------
 
 
-def _alert(*args, **kwargs):
-    """Wrapper around ``rumps.alert`` that makes the modal visible from
-    a status-bar app. See the legacy build for the full story — short
-    version: NSApp must be temporarily set to Regular activation policy
-    so the alert can steal focus, then restored to Accessory."""
+def _alert(title=None, message="", ok=None, cancel=None, other=None):
+    """A modal alert that is actually visible from a status-bar app.
+
+    Same return contract as ``rumps.alert``: ``1`` for ok, ``0`` for cancel,
+    ``-1`` for other — callers test truthiness (``if not confirm``).
+
+    Why not ``rumps.alert`` behind an activation-policy flip, which is what
+    this used to be: the app is ``LSUIElement`` (no Dock icon). Flipping to
+    the Regular policy makes the Dock create an icon, but it does so
+    asynchronously — and on the very first flip the icon does not exist yet
+    when ``activateIgnoringOtherApps_`` fires. macOS refuses the activation
+    (an inactive app may not steal focus on its own) and falls back to
+    bouncing the Dock icon as an attention request. The alert is open the
+    whole time, just behind the front app; clicking the bouncing icon is
+    the user granting the activation by hand. The second time round the
+    Dock has the icon cached, the activation is synchronous, and it "works".
+
+    So the visibility must not depend on activation succeeding. The alert's
+    window is raised to the modal-panel level and ordered front regardless —
+    it floats above the front app either way — and the policy flip is kept
+    only so the panel can take keyboard focus once it is up. This is the
+    path ``_settings_alert_with_switch`` already used, which is why that
+    dialog never bounced.
+    """
+    from AppKit import (
+        NSAlert,
+        NSApplication,
+        NSApplicationActivationPolicyAccessory,
+        NSApplicationActivationPolicyRegular,
+        NSModalPanelWindowLevel,
+    )
+
+    alert = NSAlert.alloc().init()
+    alert.setMessageText_(str(title or APP_NAME))
+    alert.setInformativeText_(str(message or ""))
+    alert.setAlertStyle_(0)  # informational
+    # Button order matters: NSAlert returns 1000 + index of the button
+    # pressed, and the FIRST button added is the default (Return key).
+    alert.addButtonWithTitle_(str(ok or "OK"))
+    if cancel is not None:
+        alert.addButtonWithTitle_(str(cancel) if isinstance(cancel, str) else "Cancel")
+    if other is not None:
+        alert.addButtonWithTitle_(str(other))
+
+    nsapp = NSApplication.sharedApplication()
     try:
-        from AppKit import (
-            NSApplication,
-            NSApplicationActivationPolicyAccessory,
-            NSApplicationActivationPolicyRegular,
-        )
-        nsapp = NSApplication.sharedApplication()
         nsapp.setActivationPolicy_(NSApplicationActivationPolicyRegular)
+    except Exception:
+        pass
+    try:
+        win = alert.window()
+        win.setLevel_(NSModalPanelWindowLevel)
+        win.orderFrontRegardless()
+        win.makeKeyAndOrderFront_(None)
+    except Exception:
+        pass
+    try:
+        # Best effort, and fine if refused: the panel is already visible.
         nsapp.activateIgnoringOtherApps_(True)
     except Exception:
-        nsapp = None
+        pass
     try:
-        return rumps.alert(*args, **kwargs)
+        raw = int(alert.runModal())
     finally:
-        if nsapp is not None:
-            try:
-                nsapp.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
-            except Exception:
-                pass
+        try:
+            nsapp.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
+        except Exception:
+            pass
+
+    # 1000 = ok, 1001 = cancel, 1002 = other -> rumps' 1 / 0 / -1.
+    if raw == 1000:
+        return 1
+    if raw == 1001:
+        return 0
+    if raw == 1002:
+        return -1
+    return raw
 
 
 def _settings_alert_with_switch(
