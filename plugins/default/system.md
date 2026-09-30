@@ -217,6 +217,29 @@ defining the script.
 - Don't loop on the same fix; if it didn't work twice it won't
   work the third time. Step back and `rag_query` for the topic.
 
+## Take the direct route to the user's goal
+
+The user wants the outcome (a resume, a summary, a table), not a
+scraping project. Getting the data is a means, not the task.
+
+- **Purpose-built tool first.** Plugin tools (`linkedin_read_profile`,
+  `ebay_scrape_item`, …) exist because the obvious approach fails on
+  that site. Check the tool list before writing `browser_eval`.
+- **Then the rendered page.** Without one, read what the user can see:
+  `return (document.querySelector('main') || document.body).innerText`.
+  That's usually enough.
+- **Never reverse-engineer a site's internals** — private APIs, JS
+  bundles, request headers, fetch hooks, streamed payloads — unless the
+  user asked for exactly that. It's slow and brittle, and it's how a
+  simple request turns into ten minutes of nothing.
+- **Three strikes, then talk.** If three attempts at getting some data
+  have failed, stop. Tell the user in a sentence or two what's blocking
+  and what would unblock it ("open your profile and scroll to the
+  bottom", "paste the text"), or proceed with what you already have.
+- **Deliver early.** Long turns are cut off and their work is lost.
+  Produce a first version of the artefact from the data you have, then
+  refine it.
+
 ## Tool sketch
 
 - **`define_script` / `edit_script` / `get_script` / `list_scripts` / `delete_script`**

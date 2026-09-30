@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import os
 from typing import Any, Iterator
@@ -32,7 +33,12 @@ try:
 except ImportError:  # SDK not installed yet
     get_session_info = get_session_messages = list_sessions = None  # type: ignore
 
-from app.services.agent_sdk.config import config_dir, workspace_dir
+from app.services.agent_sdk.config import (
+    MCP_SERVER_NAME,
+    SYNTHETIC_MODEL,
+    config_dir,
+    workspace_dir,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -94,36 +100,83 @@ async def get_brain_session_info(session_id: str) -> dict[str, Any] | None:
     return _info_to_dict(info) if info is not None else None
 
 
-def _message_to_transcript(sm: Any) -> dict[str, Any] | None:
-    """Project one stored SessionMessage into a {role, text} transcript row.
+def _transcript_rows(msgs: list[Any]) -> list[dict[str, Any]]:
+    """Project stored SessionMessages into display rows, in order:
 
-    Only user/assistant text is surfaced for display; tool-call internals are
-    omitted (the dropdown shows the conversation, not the full event log).
+    * ``{"role": "user" | "assistant", "text"}`` — prose. Consecutive text
+      blocks within one message join into one row, as the live turn renders a
+      contiguous run as one bubble.
+    * ``{"role": "tool", "id", "name", "input", "output", "is_error"}`` — a tool
+      call, emitted where the ``tool_use`` sits and filled in when its
+      ``tool_result`` (carried by a later user message) arrives. Mirrors the
+      live turn's tool steps: same name stripping, same input/output flattening.
+
+    Engine-synthetic assistant messages are dropped, as they are live.
     """
-    raw = getattr(sm, "message", None)
-    if not isinstance(raw, dict):
-        return None
-    role = raw.get("role")
-    if role not in ("user", "assistant"):
-        return None
-    content = raw.get("content")
-    if isinstance(content, str):
-        text = content
-    elif isinstance(content, list):
-        text = "\n".join(
-            str(b.get("text", "")) for b in content
-            if isinstance(b, dict) and b.get("type") == "text"
-        )
-    else:
-        text = ""
-    text = text.strip()
-    if not text:
-        return None
-    return {"role": role, "text": text}
+    from app.services.agent_sdk.runtime import _tool_result_text, _truncate
+
+    rows: list[dict[str, Any]] = []
+    tools: dict[str, dict[str, Any]] = {}
+    prefix = f"mcp__{MCP_SERVER_NAME}__"
+    for sm in msgs:
+        raw = getattr(sm, "message", None)
+        if not isinstance(raw, dict):
+            continue
+        role = raw.get("role")
+        if role not in ("user", "assistant") or raw.get("model") == SYNTHETIC_MODEL:
+            continue
+        content = raw.get("content")
+        blocks = [{"type": "text", "text": content}] if isinstance(content, str) else content
+        if not isinstance(blocks, list):
+            continue
+        text_run: list[str] = []
+
+        def flush() -> None:
+            text = "\n".join(text_run).strip()
+            text_run.clear()
+            if text:
+                rows.append({"role": role, "text": text})
+
+        for b in blocks:
+            if not isinstance(b, dict):
+                continue
+            kind = b.get("type")
+            if kind == "text":
+                text_run.append(str(b.get("text", "")))
+            elif kind == "tool_use" and role == "assistant":
+                flush()
+                try:
+                    tool_input = json.dumps(b.get("input"), ensure_ascii=False, default=str)
+                except Exception:
+                    tool_input = str(b.get("input"))
+                row = {
+                    "role": "tool",
+                    "id": b.get("id"),
+                    "name": str(b.get("name") or "tool").removeprefix(prefix),
+                    "input": _truncate(tool_input),
+                    "output": None,
+                    "is_error": False,
+                }
+                rows.append(row)
+                if b.get("id"):
+                    tools[b["id"]] = row
+            elif kind == "tool_result":
+                row = tools.get(b.get("tool_use_id"))
+                if row is not None:
+                    row["output"] = _truncate(_tool_result_text(b.get("content")))
+                    row["is_error"] = bool(b.get("is_error"))
+        flush()
+    # A call whose turn died before the result landed. Left empty, the UI would
+    # render it as still running.
+    for row in tools.values():
+        if row["output"] is None:
+            row["output"] = "(no result recorded — the turn was interrupted)"
+            row["is_error"] = True
+    return rows
 
 
 async def get_brain_transcript(session_id: str, limit: int | None = None) -> list[dict[str, Any]]:
-    """Display transcript (user/assistant text rows) for one session."""
+    """Display transcript (text and tool-call rows) for one session."""
     cfg = str(config_dir())
     cwd = str(workspace_dir())
 
@@ -133,9 +186,4 @@ async def get_brain_transcript(session_id: str, limit: int | None = None) -> lis
 
     async with _env_lock:
         msgs = await asyncio.to_thread(_call)
-    rows: list[dict[str, Any]] = []
-    for sm in msgs:
-        row = _message_to_transcript(sm)
-        if row is not None:
-            rows.append(row)
-    return rows
+    return _transcript_rows(msgs)

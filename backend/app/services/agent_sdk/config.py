@@ -21,7 +21,9 @@ credentials *and* session store with no extra plumbing.
 from __future__ import annotations
 
 import os
+import re
 import shutil
+import subprocess
 from functools import lru_cache
 from pathlib import Path
 
@@ -52,6 +54,10 @@ DEFAULT_MODEL = _default_model()
 # In-process MCP server name; tools surface to the engine as
 # ``mcp__<MCP_SERVER_NAME>__<tool>``.
 MCP_SERVER_NAME = "voitta"
+
+# ``model`` the engine stamps on assistant messages it fabricates itself
+# (never sent to the API) — e.g. "No response requested." or an API-error echo.
+SYNTHETIC_MODEL = "<synthetic>"
 
 
 def _brain_root() -> Path:
@@ -121,6 +127,70 @@ def _cli_path_cached() -> str | None:
 
 def cli_path() -> str | None:
     return _cli_path_cached()
+
+
+def _parse_version(text: str | None) -> tuple[int, ...] | None:
+    m = re.search(r"(\d+)\.(\d+)\.(\d+)", text or "")
+    return tuple(int(g) for g in m.groups()) if m else None
+
+
+def _bundled_engine() -> tuple[str, tuple[int, ...]] | None:
+    """The engine binary shipped inside the ``claude_agent_sdk`` wheel, with
+    its version (read from the package — no subprocess needed)."""
+    try:
+        import claude_agent_sdk
+        from claude_agent_sdk._cli_version import __cli_version__
+    except Exception:
+        return None
+    name = "claude.exe" if os.name == "nt" else "claude"
+    path = Path(claude_agent_sdk.__file__).parent / "_bundled" / name
+    version = _parse_version(__cli_version__)
+    if not path.is_file() or version is None:
+        return None
+    return str(path), version
+
+
+@lru_cache(maxsize=8)
+def _binary_version(real_path: str, _mtime_ns: int) -> tuple[int, ...] | None:
+    """``<binary> --version``, cached per (resolved path, mtime) so an in-place
+    ``claude update`` — which retargets the symlink — is picked up without a
+    restart."""
+    try:
+        out = subprocess.run(
+            [real_path, "--version"], capture_output=True, text=True, timeout=15,
+        )
+    except Exception:
+        return None
+    return _parse_version(out.stdout)
+
+
+def engine_cli_path() -> str | None:
+    """The newest Claude Code engine on this machine: the SDK-bundled binary
+    or the system ``claude`` install, whichever reports the higher version.
+
+    Left to itself the SDK always runs its bundled binary, which is frozen at
+    whatever version the wheel shipped with — pip only refreshes it on a new
+    app release. New models require new engines ("Claude Code 2.1.277 does not
+    support this model; version 2.1.280 or newer is required"), while a system
+    install auto-updates. Preferring the newer of the two keeps newly released
+    models usable. Ties go to the bundled binary (the SDK's tested pairing).
+
+    Returns None when neither is found, which leaves the SDK's own discovery
+    in charge (and its CLINotFoundError). May spawn ``claude --version`` on
+    first use — call it off the event loop.
+    """
+    bundled = _bundled_engine()
+    system = _cli_path_cached()
+    system_version = None
+    if system:
+        try:
+            real = os.path.realpath(system)
+            system_version = _binary_version(real, os.stat(real).st_mtime_ns)
+        except OSError:
+            system_version = None
+    if bundled and (system_version is None or bundled[1] >= system_version):
+        return bundled[0]
+    return system
 
 
 def is_available() -> bool:

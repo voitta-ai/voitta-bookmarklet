@@ -21,6 +21,18 @@ import type { ImageAttachment } from "./lib/image-attach";
 import { encodeFiles } from "./lib/attachments";
 import { useAuthConnect } from "./lib/useAuthConnect";
 
+// One row of /api/agent_sdk/sessions/{id}/messages (see
+// backend/app/services/agent_sdk/sessions.py:_transcript_rows).
+type TranscriptRow =
+  | { role: "user" | "assistant"; text: string }
+  | {
+      role: "tool";
+      name: string;
+      input: string | null;
+      output: string | null;
+      is_error: boolean;
+    };
+
 interface Props {
   backendOrigin: string;
   hasApiKey: boolean;
@@ -72,8 +84,9 @@ export default function ChatPane({
 
   // Brain (subscription) mode: replay the resumed SDK session's transcript.
   // The Agent SDK keeps its sessions in its own store (not Chainlit's thread
-  // DB), so Chainlit's resume can't render them — we fetch the {role,text} rows
-  // and seed the message atom ourselves. Gated on the socket being up so a
+  // DB), so Chainlit's resume can't render them — we fetch the text and tool
+  // rows and seed the message atom ourselves (tool rows become the same "tool"
+  // steps a live turn renders). Gated on the socket being up so a
   // connect-time reset can't wipe what we inject; runs once per mount (the pane
   // is re-keyed per session switch).
   useEffect(() => {
@@ -86,21 +99,34 @@ export default function ChatPane({
           `${backendOrigin}/api/agent_sdk/sessions/${encodeURIComponent(sdkResumeSessionId)}/messages`,
           { credentials: "include" },
         );
-        const body = (await res.json()) as {
-          messages?: { role: "user" | "assistant"; text: string }[];
-        };
+        const body = (await res.json()) as { messages?: TranscriptRow[] };
         if (cancelled) return;
         const rows = body.messages ?? [];
         // Synthetic, strictly-increasing timestamps preserve order under
         // MessageList's createdAt sort without colliding with live messages.
         const base = Date.now() - rows.length;
-        const steps: IStep[] = rows.map((m, i) => ({
-          id: `sdk-${sdkResumeSessionId}-${i}`,
-          name: m.role,
-          type: m.role === "user" ? "user_message" : "assistant_message",
-          output: m.text,
-          createdAt: new Date(base + i).toISOString(),
-        }));
+        const steps: IStep[] = rows.map((m, i) => {
+          const common = {
+            id: `sdk-${sdkResumeSessionId}-${i}`,
+            createdAt: new Date(base + i).toISOString(),
+          };
+          if (m.role === "tool") {
+            return {
+              ...common,
+              name: m.name,
+              type: "tool",
+              input: m.input ?? "",
+              output: m.output ?? "",
+              isError: m.is_error,
+            };
+          }
+          return {
+            ...common,
+            name: m.role,
+            type: m.role === "user" ? "user_message" : "assistant_message",
+            output: m.text,
+          };
+        });
         setMessages(steps);
       } catch (err) {
         console.warn("[ChatPane] sdk transcript load failed", err);

@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -62,6 +63,8 @@ from app.services.agent_sdk.bridge import build_tool_server
 from app.services.agent_sdk.config import (
     DEFAULT_MODEL,
     MCP_SERVER_NAME,
+    SYNTHETIC_MODEL,
+    engine_cli_path,
     subprocess_env,
     workspace_dir,
 )
@@ -240,10 +243,12 @@ def _make_can_use_tool():
 
 
 def _build_options(
-    *, system: str, model: str | None, resume: str | None, ctx: ToolCtx, can_use_tool: Any
+    *, system: str, model: str | None, resume: str | None, ctx: ToolCtx, can_use_tool: Any,
+    cli_path: str | None = None,
 ) -> ClaudeAgentOptions:
     server, allowed = build_tool_server(ctx)
     return ClaudeAgentOptions(
+        cli_path=cli_path,
         cwd=str(workspace_dir()),
         env=subprocess_env(),
         mcp_servers={MCP_SERVER_NAME: server},
@@ -254,8 +259,11 @@ def _build_options(
         model=model or DEFAULT_MODEL,
         resume=resume,
         # Do not load ~/.claude or project .claude config — keep the brain's
-        # behaviour fully defined by our system prompt + tool surface.
-        setting_sources=None,
+        # behaviour fully defined by our system prompt + tool surface. Must be
+        # ``[]``: ``None`` means "load every source" (CLI default), which walked
+        # up from the workspace cwd and fed the user's own ~/.claude/CLAUDE.md
+        # to the brain as project instructions.
+        setting_sources=[],
         permission_mode="default",
         # Raw API stream events (thinking/text deltas, live usage) — consumed
         # as TELEMETRY ONLY by the status ticker (phase + counters). Chat
@@ -304,9 +312,12 @@ async def run_agent_sdk_turn(
     ctx.extras["ask_user.wait_state"] = wait_state
     ctx.extras["ask_user.deadline"] = deadline
     ctx.extras["ask_user.turn_timeout_s"] = _TURN_TIMEOUT_S
+    # Newest engine available (bundled vs system install) — may spawn
+    # `claude --version` once, so off the event loop.
+    engine = await asyncio.to_thread(engine_cli_path)
     options = _build_options(
         system=system, model=model, resume=resume_session_id, ctx=ctx,
-        can_use_tool=_make_can_use_tool(),
+        can_use_tool=_make_can_use_tool(), cli_path=engine,
     )
 
     streaming_msg: cl.Message | None = None
@@ -356,8 +367,8 @@ async def run_agent_sdk_turn(
     agen = query(prompt=user_prompt_stream(user_text, image_blocks), options=options)
     timed_out = False
     logger.info(
-        "agent_sdk turn start: resume=%s model=%s prompt_chars=%d",
-        resume_session_id or "-", model or DEFAULT_MODEL, len(user_text),
+        "agent_sdk turn start: resume=%s model=%s prompt_chars=%d engine=%s",
+        resume_session_id or "-", model or DEFAULT_MODEL, len(user_text), engine or "sdk-default",
     )
     try:
         # asyncio.timeout (3.11+) fires between/after awaits — an agentic loop
@@ -377,6 +388,13 @@ async def run_agent_sdk_turn(
                     t.on_stream_event(getattr(message, "event", None) or {})
                     continue
                 if isinstance(message, AssistantMessage):
+                    if getattr(message, "model", None) == SYNTHETIC_MODEL:
+                        # Engine-generated, not the model: "No response
+                        # requested." (its reply to the "Continue from where
+                        # you left off." it injects when resuming an
+                        # interrupted turn) or an API-error echo that the
+                        # error ResultMessage already surfaces. Pure noise.
+                        continue
                     t.on_usage(getattr(message, "usage", None))
                     for block in message.content:
                         if isinstance(block, TextBlock):
@@ -440,7 +458,7 @@ async def run_agent_sdk_turn(
                         session_id = message.session_id
 
         if result_msg is not None and result_msg.is_error:
-            _raise_for_result(result_msg)
+            _raise_for_result(result_msg, model)
     except (TimeoutError, asyncio.TimeoutError):
         # Turn exceeded the wall-clock ceiling — treat as a clean, non-fatal end
         # rather than a crash. The finally block closes the generator (killing
@@ -458,11 +476,11 @@ async def run_agent_sdk_turn(
         # structured result classifies far more reliably than the exception
         # text, so prefer it when we captured one.
         if result_msg is not None and result_msg.is_error:
-            _raise_for_result(result_msg)
+            _raise_for_result(result_msg, model)
         text = str(exc).lower()
         if any(h in text for h in _AUTH_HINTS):
             raise AgentSdkAuthError(detail=str(exc)) from exc
-        raise AgentSdkError(str(exc)) from exc
+        raise AgentSdkError(_explain(str(exc), model)) from exc
     finally:
         # Always tear the engine down — aclose() propagates GeneratorExit into
         # the SDK's query loop, which terminates the subprocess transport. This
@@ -504,8 +522,35 @@ async def run_agent_sdk_turn(
     return TurnResult(session_id=session_id, is_error=False)
 
 
-def _raise_for_result(result_msg: ResultMessage) -> None:
+def _raise_for_result(result_msg: ResultMessage, model: str | None = None) -> None:
     """Raise the right typed error for an error ``ResultMessage`` (never returns)."""
     if _is_auth_failure(result_msg):
         raise AgentSdkAuthError(detail=str(result_msg.result or result_msg.errors or ""))
-    raise AgentSdkError(str(result_msg.result or result_msg.errors or "agent turn failed"))
+    raise AgentSdkError(_explain(str(result_msg.result or result_msg.errors or "agent turn failed"), model))
+
+
+# "Claude Code 2.1.277 does not support this model; version 2.1.280 or newer is
+# required. Run 'claude update', …" — the engine's gate on newly released models.
+_ENGINE_TOO_OLD = re.compile(
+    r"Claude Code (\S+) does not support this model; version (\S+) or newer", re.I,
+)
+
+
+def _explain(detail: str, model: str | None) -> str:
+    """Rewrite engine errors the user can act on into plain instructions.
+
+    The raw engine text says "run 'claude update', or update the Claude desktop
+    app", neither of which reaches the engine *bundled with Voitta*. What does
+    work: updating the system Claude Code install (the brain runs whichever
+    engine is newer — see config.engine_cli_path) or picking another model.
+    """
+    m = _ENGINE_TOO_OLD.search(detail)
+    if m:
+        have, need = m.groups()
+        return (
+            f"The model **{model or DEFAULT_MODEL}** needs Claude Code {need} or newer, "
+            f"but the newest engine Voitta found is {have}. Run `claude update` in a "
+            "terminal (Voitta uses it from the next message — no restart), or pick a "
+            "different model in ⚙ Settings."
+        )
+    return detail

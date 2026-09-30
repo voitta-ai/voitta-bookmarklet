@@ -16,7 +16,12 @@ import os
 from pathlib import Path
 from typing import Literal
 
-from app.services.agent_sdk.config import config_dir, subprocess_env, workspace_dir
+from app.services.agent_sdk.config import (
+    config_dir,
+    engine_cli_path,
+    subprocess_env,
+    workspace_dir,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -118,11 +123,12 @@ async def validate_token() -> ProbeResult:
         return PermissionResultDeny(message="tools are unavailable during token validation")
 
     options = ClaudeAgentOptions(
+        cli_path=await asyncio.to_thread(engine_cli_path),
         cwd=str(workspace_dir()),
         env=subprocess_env(),
         allowed_tools=[],
         can_use_tool=_deny_all,
-        setting_sources=None,
+        setting_sources=[],
         max_turns=1,
         system_prompt="Reply with the single word: ok",
     )
