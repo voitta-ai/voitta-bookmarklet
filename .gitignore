@@ -8,6 +8,11 @@ __pycache__/
 # Operator secrets (server deployments). Committed template: .env.example
 .env
 
+# mkcert TLS pair, minted per machine (README setup, or the tray's
+# "(Re)create TLS certificates…"). A committed key is public and only
+# verifies on the machine whose local CA signed it.
+backend/certs/
+
 # Node / Vite
 node_modules/
 frontend/dist/
