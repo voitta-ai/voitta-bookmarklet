@@ -9,6 +9,8 @@
 #   ./build_app.sh --release        # bump patch + package + sign + notarize
 #   ./build_app.sh --package        # DMG only, ad-hoc signed
 #   ./build_app.sh --bump           # bump patch version only
+#   ./build_app.sh --no-bump        # rebuild at the CURRENT version (test a fix
+#                                   #   without cutting a new number)
 #
 # --release is the one-shot distribution flow:
 #   bumps pyproject.toml's patch version, signs with Developer ID,
@@ -44,6 +46,7 @@ while [ $# -gt 0 ]; do
     --clean)    CLEAN=1;   shift ;;
     --package)  PACKAGE=1; shift ;;
     --bump)     BUMP=1;    shift ;;
+    --no-bump)  BUMP=0;    shift ;;
     --release)
       RELEASE=1; BUMP=1; PACKAGE=1; NOTARIZE=1
       shift ;;
