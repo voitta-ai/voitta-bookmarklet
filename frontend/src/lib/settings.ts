@@ -4,7 +4,7 @@
 
 export type Layout = "chat-right" | "chat-left";
 export type Theme = "light" | "dark" | "auto";
-export type ProviderId = "anthropic" | "openai" | "gemini" | "claude_code";
+export type ProviderId = "anthropic" | "openai" | "gemini" | "requesty" | "claude_code";
 
 // The 4th "brain": the Claude Agent SDK driven by a Pro/Max subscription.
 // Selected via the same provider dropdown but handled by a separate runtime

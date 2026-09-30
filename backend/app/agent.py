@@ -480,7 +480,12 @@ async def run_turn(
                     step.elements = elements
                 await step.update()
 
-            if image_blocks and provider_id == "anthropic":
+            # Requesty silently drops tool_result images for non-Claude
+            # models, so those get the textual note below instead.
+            if image_blocks and (
+                provider_id == "anthropic"
+                or (provider_id == "requesty" and "claude" in use_model)
+            ):
                 text_part = _tool_result_text(content_payload)
                 content_parts: list[dict[str, Any]] = [
                     {"type": "text", "text": text_part},

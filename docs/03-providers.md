@@ -7,6 +7,11 @@
 | `anthropic` | `claude-sonnet-4-6` |
 | `openai` | `gpt-4o` |
 | `gemini` | `gemini-2.0-flash-exp` |
+| `requesty` | `anthropic/claude-sonnet-5` |
+
+## Requesty
+
+`requesty` goes through the Requesty router's Anthropic-compatible Messages endpoint and reuses the Anthropic adapter (streaming, tool use, inline images, `cache_control`). Model ids are router-qualified: `anthropic/claude-sonnet-5`, `openai/gpt-5.5`, `vertex/gemini-2.5-pro`. The base URL defaults to `https://router.requesty.ai`; set `REQUESTY_BASE_URL` for a private deployment (a trailing `/v1` is tolerated).
 
 ## settings.json format
 
@@ -44,7 +49,7 @@ All three providers stream. The agent loop uses `async for ev in provider.stream
 
 ## Tool results with images
 
-Only Anthropic supports inline image blocks in tool results. When a screenshot is captured and the active provider is not Anthropic, the agent injects a note: `"N image(s) captured but current provider doesn't accept inline images — switch to Anthropic to view them"`.
+Only Anthropic supports inline image blocks in tool results (also Requesty with Claude models; Requesty drops them silently for other models). When a screenshot is captured and the active provider is neither Anthropic nor Requesty with a Claude model, the agent injects a note: `"N image(s) captured but current provider doesn't accept inline images — switch to Anthropic to view them"`.
 
 ## Agent-loop caps
 
