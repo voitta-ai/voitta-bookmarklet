@@ -43,10 +43,15 @@ git clone <url> voitta-compute
 cd voitta-compute
 git submodule update --init --recursive --depth 1   # pulls lib-sources/*
 ./build.sh
+mkcert -install                                      # once per machine: trust mkcert's local CA
+mkdir -p backend/certs && (cd backend/certs && \
+  mkcert -cert-file 127.0.0.1+1.pem -key-file 127.0.0.1+1-key.pem 127.0.0.1 localhost)
 ```
 
 `build.sh` installs the FE deps, builds the bookmarklet bundle, and
 sets up the BE venv with chromadb, bm25s, fastmcp, rumps, etc.
+The TLS pair in `backend/certs/` is per-machine and git-ignored — without
+it `start.sh` serves plain HTTP, which HTTPS pages block as mixed content.
 
 ## Run
 
