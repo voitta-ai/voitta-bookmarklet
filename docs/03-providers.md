@@ -49,7 +49,7 @@ All three providers stream. The agent loop uses `async for ev in provider.stream
 
 ## Tool results with images
 
-Only Anthropic supports inline image blocks in tool results (also Requesty with Claude models; Requesty drops them for other models). When a screenshot is captured and the active provider is not Anthropic, the agent injects a note: `"N image(s) captured but current provider doesn't accept inline images — switch to Anthropic to view them"`.
+Only Anthropic supports inline image blocks in tool results (also Requesty with Claude models; Requesty drops them silently for other models). When a screenshot is captured and the active provider is neither Anthropic nor Requesty with a Claude model, the agent injects a note: `"N image(s) captured but current provider doesn't accept inline images — switch to Anthropic to view them"`.
 
 ## Agent-loop caps
 
