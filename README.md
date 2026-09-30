@@ -70,10 +70,10 @@ The tray menu has About / Open / Copy bookmarklet / Settings (with
 the MCP-debug toggle) / Show data folder / (Re)create TLS certs /
 Reset / Quit.
 
-Open `https://127.0.0.1:12358/` once in a browser to accept the
-self-signed cert. Then drag the bookmarklet (Copy bookmarklet from
-the tray, or build your own pointing at `/widget.js`) to your
-bookmarks bar.
+Open `https://127.0.0.1:12358/bookmarklets` and drag **Voitta** to
+your bookmarks bar — or **Voitta (Salesforce)** for strict-CSP sites,
+which loads through the plain-HTTP bridge on `:12359`. The tray's
+Copy bookmarklet items give the same two links.
 
 ## Configuration
 
