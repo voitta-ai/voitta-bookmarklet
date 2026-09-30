@@ -18,7 +18,7 @@ from app.services.llm.base import (
 )
 
 
-ProviderId = Literal["anthropic", "openai", "gemini"]
+ProviderId = Literal["anthropic", "openai", "gemini", "requesty"]
 
 
 def get_provider(provider_id: ProviderId, api_key: str | None) -> Provider:
@@ -36,6 +36,9 @@ def get_provider(provider_id: ProviderId, api_key: str | None) -> Provider:
     if provider_id == "gemini":
         from app.services.llm.gemini import GeminiProvider
         return GeminiProvider(api_key=api_key)
+    if provider_id == "requesty":
+        from app.services.llm.anthropic import RequestyProvider
+        return RequestyProvider(api_key=api_key)
     raise ProviderNotConfigured(provider_id, f"unknown provider {provider_id!r}")
 
 

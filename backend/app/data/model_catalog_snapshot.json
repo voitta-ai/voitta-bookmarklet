@@ -33,6 +33,16 @@
       "gemini-2.0-flash-lite"
     ]
   },
+  "requesty": {
+    "default": "anthropic/claude-sonnet-5",
+    "models": [
+      "anthropic/claude-opus-5",
+      "anthropic/claude-sonnet-5",
+      "anthropic/claude-opus-4-8",
+      "anthropic/claude-sonnet-4-6",
+      "anthropic/claude-haiku-4-5"
+    ]
+  },
   "claude_code": {
     "default": "claude-opus-5",
     "models": [

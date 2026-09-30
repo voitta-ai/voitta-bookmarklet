@@ -26,12 +26,14 @@ const PROVIDERS: { id: ProviderId; label: string }[] = [
   { id: "anthropic", label: "Anthropic (Claude)" },
   { id: "openai", label: "OpenAI (ChatGPT)" },
   { id: "gemini", label: "Google (Gemini)" },
+  { id: "requesty", label: "Requesty (router)" },
 ];
 
 const KEY_PLACEHOLDER: Record<ProviderId, string> = {
   anthropic: "sk-ant-...",
   openai: "sk-...",
   gemini: "AIza...",
+  requesty: "sk-...",
   claude_code: "", // subscription brain — no API key field
 };
 

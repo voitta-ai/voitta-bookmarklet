@@ -37,7 +37,7 @@ from app.config import USER_DATA_ROOT
 logger = logging.getLogger(__name__)
 
 # Providers that fetch a live catalog from an API key.
-_API_PROVIDERS = ("anthropic", "openai", "gemini")
+_API_PROVIDERS = ("anthropic", "openai", "gemini", "requesty")
 # The subscription brain — probed separately, snapshot-only today.
 _CLAUDE_CODE = "claude_code"
 _ALL_PROVIDERS = (*_API_PROVIDERS, _CLAUDE_CODE)

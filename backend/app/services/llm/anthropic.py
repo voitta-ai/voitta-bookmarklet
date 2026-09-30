@@ -158,6 +158,42 @@ class AnthropicProvider(BaseProvider):
         return _AnthropicStreamCM(self._client, self._build_kwargs(req))
 
 
+# Public Requesty router. Private deployments (same API, different host)
+# set REQUESTY_BASE_URL instead — keep such hostnames out of this repo.
+REQUESTY_BASE_URL = "https://router.requesty.ai"
+
+
+class RequestyProvider(AnthropicProvider):
+    """Requesty router via its Anthropic-compatible Messages endpoint.
+
+    Same wire as Anthropic, so streaming, tool use, inline images and
+    ``cache_control`` pass straight through; Requesty translates for
+    non-Anthropic models. Model ids are router-qualified
+    (``anthropic/claude-sonnet-5``, ``openai/gpt-5.5``, ``vertex/…``).
+    """
+
+    id = "requesty"
+
+    def __init__(self, api_key: str) -> None:
+        base_url = os.environ.get("REQUESTY_BASE_URL") or REQUESTY_BASE_URL
+        # The SDK appends /v1/messages itself; tolerate the OpenAI-style
+        # ".../v1" form other tools use for the same router.
+        base_url = base_url.rstrip("/").removesuffix("/v1")
+        self._client = AsyncAnthropic(api_key=api_key, base_url=base_url)
+
+    async def list_models(self) -> list[str]:
+        """Router catalog, newest-first.
+
+        ``/v1/models`` here is OpenAI-shaped (``{object, data}``), not
+        Anthropic's paginated shape, so read it raw.
+        """
+        body = await self._client.get("/v1/models", cast_to=object)
+        models = [m for m in (body or {}).get("data") or [] if isinstance(m.get("id"), str)]
+        models.sort(key=lambda m: m.get("created") or 0, reverse=True)
+        retval = [m["id"] for m in models]
+        return retval
+
+
 class _AnthropicStreamCM:
     """Async context manager wrapping ``client.messages.create(stream=True)``.
 
