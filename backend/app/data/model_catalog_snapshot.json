@@ -54,5 +54,17 @@
       "claude-sonnet-4-6",
       "claude-haiku-4-5-20251001"
     ]
+  },
+  "codex": {
+    "default": "gpt-5.5",
+    "models": [
+      "gpt-6-astra",
+      "gpt-6-sol",
+      "gpt-6-luna",
+      "gpt-5.6-sol",
+      "gpt-5.6-terra",
+      "gpt-5.6-luna",
+      "gpt-5.5"
+    ]
   }
 }

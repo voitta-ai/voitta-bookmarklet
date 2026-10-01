@@ -1128,6 +1128,7 @@ app is on *that page's origin* — not necessarily this backend.
 | `VOITTA_HOST` / `VOITTA_PORT` / `VOITTA_BRIDGE_PORT` | listener overrides (shell mode, [start.sh](start.sh)) | `127.0.0.1` / `12358` / `12359` |
 | `VOITTA_PUBLIC_BASE_URL` | public origin for server deployments (bookmarklet links) | request base URL |
 | `REQUESTY_BASE_URL` | Requesty router base for the `requesty` provider (private deployments) | `https://router.requesty.ai` |
+| `CODEX_HOME` | codex CLI home holding `auth.json` + `models_cache.json` for the `codex` provider | `~/.codex` |
 | `VOITTA_GOOGLE_AUTH_CLIENT_ID/SECRET` | enables server-mode auth | unset (desktop: no auth) |
 | `VOITTA_AUTH_SECRET` | Chainlit JWT key | generated, persisted at `<data>/auth_secret` |
 | `CHAINLIT_APP_ROOT` | set early — chainlit resolves FILES_DIRECTORY at import | set by desktop.py |

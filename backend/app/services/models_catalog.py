@@ -37,7 +37,7 @@ from app.config import USER_DATA_ROOT
 logger = logging.getLogger(__name__)
 
 # Providers that fetch a live catalog from an API key.
-_API_PROVIDERS = ("anthropic", "openai", "gemini", "requesty")
+_API_PROVIDERS = ("anthropic", "openai", "gemini", "requesty", "codex")
 # The subscription brain — probed separately, snapshot-only today.
 _CLAUDE_CODE = "claude_code"
 _ALL_PROVIDERS = (*_API_PROVIDERS, _CLAUDE_CODE)
@@ -118,6 +118,10 @@ def _credential_for(provider: str) -> str | None:
             return load_token()
         except Exception:
             return None
+    if provider == "codex":
+        from app.services.llm.codex import access_token
+
+        return access_token()
     from app.settings import api_key_for
 
     return api_key_for(provider)

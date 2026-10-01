@@ -18,10 +18,25 @@ from app.services.llm.base import (
 )
 
 
-ProviderId = Literal["anthropic", "openai", "gemini", "requesty"]
+ProviderId = Literal["anthropic", "openai", "gemini", "requesty", "codex"]
+
+
+def resolve_api_key(provider_id: str, api_keys: dict[str, str]) -> str | None:
+    """Credential for a provider: the saved API key, or for ``codex`` the
+    ChatGPT access token the ``codex`` CLI keeps in its auth.json."""
+    if provider_id == "codex":
+        from app.services.llm.codex import access_token
+        retval = access_token()
+    else:
+        retval = api_keys.get(provider_id) or None
+    return retval
 
 
 def get_provider(provider_id: ProviderId, api_key: str | None) -> Provider:
+    if provider_id == "codex":
+        # Subscription auth: re-read from the codex CLI's auth.json per request.
+        from app.services.llm.codex import CodexProvider
+        return CodexProvider()
     if not api_key:
         raise ProviderNotConfigured(
             provider_id,
@@ -71,4 +86,5 @@ __all__ = [
     "Usage",
     "default_model_for",
     "get_provider",
+    "resolve_api_key",
 ]

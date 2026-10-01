@@ -250,7 +250,8 @@ def redacted_for_wire(s: UserSettings | None = None) -> dict[str, Any]:
         "theme": s.get("theme", "auto"),
         "max_tool_iterations": s.get("max_tool_iterations", DEFAULT_MAX_TOOL_ITERATIONS),
         "max_tokens": s.get("max_tokens", DEFAULT_MAX_TOKENS),
-        "has_api_keys": {p: bool(v) for p, v in keys.items()},
+        # codex has no saved key: "has key" means the codex CLI is signed in.
+        "has_api_keys": {**{p: bool(v) for p, v in keys.items()}, "codex": _codex_signed_in()},
         "googleOAuth": g,
         "plugins": dict(blob.get("plugins") or {}),
         # Claude (subscription) brain: whether the Claude Code engine is
@@ -281,6 +282,13 @@ def _redact_google_oauth(raw: Any) -> dict[str, Any]:
             redacted_accounts[aid] = a
         g["accounts"] = redacted_accounts
     return g
+
+
+def _codex_signed_in() -> bool:
+    from app.services.llm.codex import access_token
+
+    retval = access_token() is not None
+    return retval
 
 
 def _agent_sdk_status() -> dict[str, Any]:

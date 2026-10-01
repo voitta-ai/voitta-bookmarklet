@@ -8,12 +8,16 @@
 | `openai` | `gpt-4o` |
 | `gemini` | `gemini-2.0-flash-exp` |
 | `requesty` | `anthropic/claude-sonnet-5` |
+| `codex` | `gpt-5.5` |
 
 ## Requesty
 
 `requesty` goes through the Requesty router's Anthropic-compatible Messages endpoint and reuses the Anthropic adapter (streaming, tool use, inline images, `cache_control`). Model ids are router-qualified: `anthropic/claude-sonnet-5`, `openai/gpt-5.5`, `vertex/gemini-2.5-pro`. The base URL defaults to `https://router.requesty.ai`; set `REQUESTY_BASE_URL` for a private deployment (a trailing `/v1` is tolerated).
 
-## settings.json format
+## Codex (ChatGPT subscription)
+
+`codex` runs on a ChatGPT plan instead of an API key, using the login of the `codex` CLI. It reuses the OpenAI Responses adapter against `https://chatgpt.com/backend-api/codex/responses`, with the CLI's headers (`originator: codex_cli_rs`, `ChatGPT-Account-Id`), `store: false`, no `max_output_tokens`, and `strict: false` on tools. The access token and account id are read from `$CODEX_HOME/auth.json` (default `~/.codex/auth.json`) on every request. Voitta never refreshes or writes that file: the CLI owns it, so run `codex login` (or any `codex` command) when the token expires. A warning is logged within 24h of expiry. The model list comes from the CLI's `models_cache.json` (models the plan offers). There is no API-key field in Settings.
+
 
 Located at `~/.config/voitta-compute/settings.json`.
 
