@@ -45,6 +45,7 @@ const PROVIDER_LETTER: Record<string, string> = {
   anthropic: "A",
   gemini: "G",
   openai: "O",
+  codex: "X",
   claude_code: "C",
 };
 

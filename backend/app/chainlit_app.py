@@ -16,6 +16,7 @@ from chainlit.types import ThreadDict
 
 from app.agent import run_turn
 from app.plugins import for_host, load_all
+from app.services.llm import resolve_api_key
 from app.services.llm.base import Message as LlmMessage
 from app.settings import load as load_user_settings
 from app.tools.registry import ToolCtx
@@ -267,7 +268,7 @@ async def on_chat_start() -> None:
     models = user_settings.get("models") or {}
     cl.user_session.set("messages", [])
     cl.user_session.set("provider", provider)
-    cl.user_session.set("api_key", api_keys.get(provider))
+    cl.user_session.set("api_key", resolve_api_key(provider, api_keys))
     cl.user_session.set("model", models.get(provider))
     # host is set by on_window_message which can arrive before or after
     # on_chat_start — never overwrite it here.
@@ -288,7 +289,11 @@ async def on_chat_start() -> None:
     # in-chat, not an API key — don't nag about a missing key for it.
     from app.services.agent_sdk import BRAIN_PROVIDER
 
-    if provider != BRAIN_PROVIDER and not api_keys.get(provider):
+    if provider == "codex" and not resolve_api_key(provider, api_keys):
+        await cl.Message(
+            content="⚠️ Codex is not signed in. Run `codex login` in a terminal.",
+        ).send()
+    elif provider not in (BRAIN_PROVIDER, "codex") and not api_keys.get(provider):
         await cl.Message(
             content="⚠️ No API key configured. Open ⚙ Settings to add one.",
         ).send()
@@ -330,7 +335,7 @@ async def on_chat_resume(thread: ThreadDict) -> None:
     api_keys = user_settings.get("api_keys") or {}
     models = user_settings.get("models") or {}
     cl.user_session.set("provider", provider)
-    cl.user_session.set("api_key", api_keys.get(provider))
+    cl.user_session.set("api_key", resolve_api_key(provider, api_keys))
     cl.user_session.set("model", models.get(provider))
 
     messages: list[LlmMessage] = []
@@ -431,10 +436,14 @@ async def _run_message_turn(user_msg: cl.Message, email: str | None) -> None:
     provider = fresh.get("provider", "anthropic")
     api_keys = fresh.get("api_keys") or {}
     models = fresh.get("models") or {}
-    api_key = api_keys.get(provider)
+    api_key = resolve_api_key(provider, api_keys)
     if not api_key:
         await cl.Message(
-            content=f"⚠️ No API key for provider {provider!r}. Open ⚙ Settings to add one.",
+            content=(
+                "⚠️ Codex is not signed in. Run `codex login` in a terminal."
+                if provider == "codex"
+                else f"⚠️ No API key for provider {provider!r}. Open ⚙ Settings to add one."
+            ),
         ).send()
         del messages[snapshot:]
         return

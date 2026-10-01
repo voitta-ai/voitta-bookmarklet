@@ -27,6 +27,7 @@ const PROVIDERS: { id: ProviderId; label: string }[] = [
   { id: "openai", label: "OpenAI (ChatGPT)" },
   { id: "gemini", label: "Google (Gemini)" },
   { id: "requesty", label: "Requesty (router)" },
+  { id: "codex", label: "Codex (ChatGPT subscription)" },
 ];
 
 const KEY_PLACEHOLDER: Record<ProviderId, string> = {
@@ -34,6 +35,7 @@ const KEY_PLACEHOLDER: Record<ProviderId, string> = {
   openai: "sk-...",
   gemini: "AIza...",
   requesty: "sk-...",
+  codex: "", // ChatGPT subscription via the codex CLI — no API key field
   claude_code: "", // subscription brain — no API key field
 };
 
@@ -216,6 +218,15 @@ export default function GlobalSettings({ backendOrigin }: Props) {
             </p>
           )}
         </div>
+      ) : provider === "codex" ? (
+        // ChatGPT subscription: credentials are the codex CLI's own
+        // ~/.codex/auth.json, re-read on every request.
+        <p className="muted" style={{ marginTop: 4 }}>
+          {providerHasKey
+            ? "✓ Signed in through the codex CLI."
+            : "Not signed in. Run `codex login` in a terminal."}{" "}
+          No API key needed — uses your ChatGPT plan via the <code>codex</code> CLI's login.
+        </p>
       ) : (
         <>
           <label htmlFor="vb-key">API key</label>
