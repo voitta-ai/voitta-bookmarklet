@@ -262,7 +262,7 @@ scraping project. Getting the data is a means, not the task.
   the user's current tab. Full DOM/fetch/localStorage/cookie access;
   top-level `await` works; returns `{ok, result, logs, ms}`. Use this
   when no narrower plugin primitive covers the task. When a
-  purpose-built tool exists (e.g. `simr_get_token`, `ebay_scrape_search`,
+  purpose-built tool exists (e.g. `linkedin_read_profile`, `ebay_scrape_search`,
   `sheets_get_page_context`), prefer it — the result shape is stable and
   it's faster.
 - **`rag_query` / `rag_get_chunk_range`** — search the docs and code
