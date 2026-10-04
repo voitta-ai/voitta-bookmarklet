@@ -44,6 +44,12 @@ async def _patched_resume_thread(session):
     if not thread:
         logger.warning("resume_thread: thread %s not found", session.thread_id_to_resume)
         return
+    # With sign-in on, a session may only resume its own user's threads —
+    # a thread id from elsewhere must not load another user's conversation.
+    from app.services.login_auth import is_enabled
+    if is_enabled() and (not session.user or thread.get("userIdentifier") != session.user.identifier):
+        logger.warning("resume_thread: ownership check failed")
+        return
     logger.info("resume_thread: resuming thread %s userIdentifier=%s", thread.get("id"), thread.get("userIdentifier"))
     metadata = thread.get("metadata") or {}
     if isinstance(metadata, str):
