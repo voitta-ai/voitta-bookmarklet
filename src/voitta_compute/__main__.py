@@ -16,8 +16,17 @@ import json
 import multiprocessing
 import os
 import shutil
+import signal
 import sys
 from pathlib import Path
+
+# The Briefcase stub starts Python with an isolated config, which skips
+# Python's own signal setup — including ignoring SIGPIPE. Without this, a
+# write to a socket the peer already closed (an MCP client dropping a
+# connection mid-response, a browser closing a tab) kills the whole app
+# instantly: exit 141, no traceback, no crash report. Ignored, the write
+# raises BrokenPipeError instead, which the servers handle.
+signal.signal(signal.SIGPIPE, signal.SIG_IGN)
 
 # freeze_support() must be at module level in a frozen executable so that
 # multiprocessing spawn children (which re-run this module) exit immediately
