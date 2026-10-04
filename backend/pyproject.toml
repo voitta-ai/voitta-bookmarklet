@@ -9,6 +9,7 @@ dependencies = [
   "fastapi",
   "uvicorn[standard]",
   "pydantic>=2",
+  "jsonschema>=4",
   "anthropic>=0.39",
   "openai>=1.50",
   "google-genai>=0.3",

@@ -42,6 +42,8 @@ _CORE_HEAVY_PACKAGES: list[tuple[str, str]] = [
     # Claude Code engine). The engine binary itself is a separate install the
     # brain probes for at runtime; this is just the Python driver.
     ("claude_agent_sdk", "claude-agent-sdk>=0.2.82"),
+    # Argument validation for the agent tools on /mcp (mcp_registry).
+    ("jsonschema", "jsonschema>=4"),
     # Upper bound matches numba's numpy ceiling. numba (pulled in by the voice
     # assistant's mlx_whisper) requires numpy<2.5; without this cap the main
     # install resolves numpy 2.5, the live process imports it, and a later voice

@@ -15,7 +15,7 @@ import chainlit as cl
 from chainlit.types import ThreadDict
 
 from app.agent import run_turn
-from app.plugins import for_host, load_all
+from app.plugins import load_all
 from app.services.llm import resolve_api_key
 from app.services.llm.base import Message as LlmMessage
 from app.settings import load as load_user_settings
@@ -203,22 +203,11 @@ load_all()
 
 
 def _compose_system_prompt(host: str | None) -> str:
-    """System prompt = applicable plugins' prompts + the active project
-    block (which project is live, its PROJECT.md notes, and the
-    project_remember affordance). Shared by both brain paths."""
-    parts: list[str] = []
-    for plugin in for_host(host):
-        if plugin.system_prompt:
-            parts.append(plugin.system_prompt.rstrip())
-    try:
-        from app.services.projects import system_prompt_block
+    """System prompt for ``host`` — see :mod:`app.services.system_prompt`
+    (shared with the external-agent tool surface on /mcp)."""
+    from app.services.system_prompt import compose
 
-        block = system_prompt_block()
-        if block:
-            parts.append(block)
-    except Exception:
-        logger.exception("project system-prompt block failed")
-    return "\n\n".join(parts)
+    return compose(host)
 
 
 def _apply_current_user() -> str | None:
