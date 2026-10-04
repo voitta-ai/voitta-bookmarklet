@@ -94,17 +94,15 @@ class TurnResult:
     is_error: bool = False
 
 
-# Wall-clock ceiling for one brain turn. Agentic loops — especially now that the
-# engine can run Bash — can otherwise run indefinitely (a command waiting on
-# stdin, a runaway define/run/probe loop). An unbounded turn holds the engine
-# subprocess *and* keeps the event loop it streams on busy, which is the "dead
-# session" that makes the whole app look wedged. On expiry we close the SDK
-# generator (terminating the engine subprocess) and surface a clean error.
-# Override with VOITTA_BRAIN_TURN_TIMEOUT_S (seconds).
+# Optional wall-clock ceiling for one brain turn, in seconds. Off by default:
+# real work (building a report, reading a large profile) routinely runs past
+# any fixed limit, and the user ends a turn with Stop. Set
+# VOITTA_BRAIN_TURN_TIMEOUT_S to impose one; on expiry the SDK generator is
+# closed (terminating the engine subprocess) and the user gets a clean notice.
 try:
-    _TURN_TIMEOUT_S = float(os.environ.get("VOITTA_BRAIN_TURN_TIMEOUT_S", "600"))
+    _TURN_TIMEOUT_S: float | None = float(os.environ.get("VOITTA_BRAIN_TURN_TIMEOUT_S") or 0) or None
 except ValueError:
-    _TURN_TIMEOUT_S = 600.0
+    _TURN_TIMEOUT_S = None
 
 
 def _truncate(text: str, limit: int = 32_000) -> str:
@@ -378,8 +376,10 @@ async def run_agent_sdk_turn(
         # off-loaded, so in practice the turn stays interruptible.)
         async with asyncio.timeout(_TURN_TIMEOUT_S) as _turn_deadline:
             # Hand the Timeout to the ask_user_question tool so a pending
-            # question can push the ceiling out (and restore it).
-            deadline[0] = _turn_deadline
+            # question can push the ceiling out (and restore it). Without a
+            # ceiling there is nothing to extend — and rescheduling would
+            # create one.
+            deadline[0] = _turn_deadline if _TURN_TIMEOUT_S else None
             async for message in agen:
                 if StreamEvent is not None and isinstance(message, StreamEvent):
                     # Telemetry only — phases + live counters for the status
@@ -508,13 +508,12 @@ async def run_agent_sdk_turn(
         t.summary() or "no telemetry",
     )
     if timed_out:
-        mins = int(_TURN_TIMEOUT_S // 60)
         await cl.Message(
             content=(
-                f"⏱️ This turn ran longer than {mins} min and was stopped so it "
-                "couldn't hang the app. This often means a command was waiting "
-                "for input or a step looped. Send another message to continue — "
-                "the conversation is preserved."
+                f"⏱️ This turn hit the configured limit of "
+                f"{_TURN_TIMEOUT_S:.0f} s (VOITTA_BRAIN_TURN_TIMEOUT_S) and was "
+                "stopped. Send another message to continue — the conversation "
+                "is preserved."
             ),
         ).send()
         return TurnResult(session_id=session_id, is_error=True)
