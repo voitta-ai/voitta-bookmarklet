@@ -41,10 +41,10 @@ scripts_state/
 
 # Build-generated resource staging (populated by build_app.sh step 5).
 # Master copies live in docs/, plugins/, frontend/ — never edit under resources/.
-src/voitta_compute/resources/docs/
-src/voitta_compute/resources/frontend_dist/
-src/voitta_compute/resources/plugins/
-src/voitta_compute/resources/vendor_js/
+src/voitta_bookmarklet/resources/docs/
+src/voitta_bookmarklet/resources/frontend_dist/
+src/voitta_bookmarklet/resources/plugins/
+src/voitta_bookmarklet/resources/vendor_js/
 
 # Build artifacts / release binaries
 dist/

@@ -1,4 +1,4 @@
-"""The agent-tools family on /mcp (``vc_*``): an external agent driving the
+"""The agent-tools family on /mcp (``vb_*``): an external agent driving the
 tool registry the in-app agent uses.
 
 Exercised end to end through FastMCP's in-process client, so listing,
@@ -83,9 +83,9 @@ async def test_switches_hide_and_refuse_each_family(server, monkeypatch):
     monkeypatch.setattr(user_settings, "mcp_tools_enabled", lambda: False)
     async with Client(server) as c:
         names = {t.name for t in await c.list_tools()}
-        assert "mcp_eval" in names and not any(n.startswith("vc_") for n in names)
+        assert "mcp_eval" in names and not any(n.startswith("vb_") for n in names)
         with pytest.raises(Exception, match="switched off"):
-            await c.call_tool("vc_sessions", {})
+            await c.call_tool("vb_sessions", {})
 
     monkeypatch.setattr(user_settings, "mcp_tools_enabled", lambda: True)
     monkeypatch.setattr(user_settings, "mcp_debug_enabled", lambda: False)
@@ -111,16 +111,16 @@ async def test_families_are_told_apart(server):
         tools = await c.list_tools()
         info = c.initialize_result
     for t in tools:
-        tag = ("[Agent tools]" if t.name.startswith("vc_")
+        tag = ("[Agent tools]" if t.name.startswith("vb_")
                else "[In-app agent]" if t.name == "mcp_inject_text" else "[Debugging]")
         assert (t.description or "").startswith(tag), t.name
-    for family in ("AGENT TOOLS (vc_*)", "DEBUGGING TOOLS (mcp_*)", "IN-APP AGENT (mcp_inject_text)"):
+    for family in ("AGENT TOOLS (vb_*)", "DEBUGGING TOOLS (mcp_*)", "IN-APP AGENT (mcp_inject_text)"):
         assert family in info.instructions
 
 
 async def test_lists_page_tools_and_hides_ask_user(server):
     async with Client(server) as c:
-        listed = _json(await c.call_tool("vc_list_tools", {"session_id": "s1"}))
+        listed = _json(await c.call_tool("vb_list_tools", {"session_id": "s1"}))
     names = {t["name"]: t for t in listed["tools"]}
     assert names["t_page_echo"]["needs_page"] is True
     assert names["t_server_echo"]["summary"] == "Echo."
@@ -130,7 +130,7 @@ async def test_lists_page_tools_and_hides_ask_user(server):
 async def test_call_runs_in_the_pages_session_as_its_user(server):
     SEEN.clear()
     async with Client(server) as c:
-        res = await c.call_tool("vc_call_tool", {"name": "t_page_echo", "arguments": {"text": "hi"}})
+        res = await c.call_tool("vb_call_tool", {"name": "t_page_echo", "arguments": {"text": "hi"}})
     assert not res.is_error
     assert SEEN == {"args": {"text": "hi"}, "session_id": "s1", "host": "example.com",
                     "email": "a@b.c", "cl_session": "s1", "current_email": "a@b.c"}
@@ -140,7 +140,7 @@ async def test_call_runs_in_the_pages_session_as_its_user(server):
 async def test_invalid_arguments_never_reach_the_tool(server):
     SEEN.clear()
     async with Client(server) as c:
-        res = await c.call_tool("vc_call_tool", {"name": "t_server_echo", "arguments": {"txt": 1}},
+        res = await c.call_tool("vb_call_tool", {"name": "t_server_echo", "arguments": {"txt": 1}},
                                 raise_on_error=False)
     assert res.is_error and _json(res)["error"] == "invalid_arguments"
     assert SEEN == {}
@@ -151,9 +151,9 @@ async def test_page_tools_need_a_page(server, monkeypatch):
 
     monkeypatch.setattr(cl_sessions, "get_active_session", lambda: None)
     async with Client(server) as c:
-        listed = _json(await c.call_tool("vc_list_tools", {}))
-        res = await c.call_tool("vc_call_tool", {"name": "t_server_echo", "arguments": {"text": "x"}})
-        gone = await c.call_tool("vc_call_tool", {"name": "t_page_echo", "session_id": "nope"},
+        listed = _json(await c.call_tool("vb_list_tools", {}))
+        res = await c.call_tool("vb_call_tool", {"name": "t_server_echo", "arguments": {"text": "x"}})
+        gone = await c.call_tool("vb_call_tool", {"name": "t_page_echo", "session_id": "nope"},
                                  raise_on_error=False)
     assert listed["session_id"] is None and "t_page_echo" not in {t["name"] for t in listed["tools"]}
     assert not res.is_error  # server tools still work with no page open
@@ -165,6 +165,6 @@ async def test_instructions_are_the_in_app_prompt(server, monkeypatch):
 
     monkeypatch.setattr(system_prompt, "compose", lambda host: f"RULES FOR {host}")
     async with Client(server) as c:
-        out = _json(await c.call_tool("vc_instructions", {"session_id": "s1"}))
+        out = _json(await c.call_tool("vb_instructions", {"session_id": "s1"}))
     assert out["instructions"].endswith("RULES FOR example.com")
     assert "ask_user_question" in out["instructions"]  # tells the agent what differs

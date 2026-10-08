@@ -15,6 +15,9 @@ if [ ! -d .venv ]; then
   exit 1
 fi
 
+# Adopt Voitta Compute-era settings/data dirs (one-time; see app/brand_migration.py).
+./.venv/bin/python -m app.brand_migration
+
 ARGS=(app.main:app --host "$HOST" --port "$PORT")
 if [ "${VOITTA_RELOAD:-0}" = "1" ]; then ARGS+=(--reload); fi
 

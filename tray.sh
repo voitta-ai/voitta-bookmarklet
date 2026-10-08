@@ -10,4 +10,7 @@ if [ ! -d .venv ]; then
   exit 1
 fi
 
+# Adopt Voitta Compute-era settings/data dirs (one-time; see app/brand_migration.py).
+./.venv/bin/python -m app.brand_migration
+
 exec ./.venv/bin/python -m app.desktop

@@ -1,7 +1,7 @@
 """Process-wide settings — module-level constants.
 
 Per-user settings (provider, api_key, model) live at
-``~/.config/voitta-compute/settings.json`` and are read at
+``~/.config/voitta-bookmarklet/settings.json`` and are read at
 chat-start by ``app.settings``.
 
 The base system prompt is no longer a constant here — it lives in
@@ -39,7 +39,7 @@ PORT = 12358
 PLAINTEXT_PORT = 12359
 
 # When running as a packaged .app the launcher sets VOITTA_PROJECT_ROOT to
-# ~/Library/Application Support/Voitta Compute/backend so all derived paths
+# ~/Library/Application Support/Voitta Bookmarklet/backend so all derived paths
 # (certs, rag, plugins, docs) resolve into the writable user data dir rather
 # than the read-only bundle.
 _env_root = os.environ.get("VOITTA_PROJECT_ROOT")
@@ -50,17 +50,17 @@ PROJECT_ROOT = Path(_env_root) if _env_root else Path(__file__).resolve().parent
 # deployments point it at e.g. /var/lib/voitta), otherwise it defaults to
 # the macOS Application Support dir. Never inside the source tree or the
 # read-only .app bundle. The macOS launcher sets VOITTA_DATA_ROOT explicitly
-# (see src/voitta_compute/__main__.py) so the default is just a dev fallback.
+# (see src/voitta_bookmarklet/__main__.py) so the default is just a dev fallback.
 _env_data = os.environ.get("VOITTA_DATA_ROOT")
 USER_DATA_ROOT = (
     Path(_env_data)
     if _env_data
-    else Path.home() / "Library" / "Application Support" / "Voitta Compute" / "backend"
+    else Path.home() / "Library" / "Application Support" / "Voitta Bookmarklet" / "backend"
 )
 TLS_CERT_PATH = PROJECT_ROOT / "certs" / "127.0.0.1+1.pem"
 TLS_KEY_PATH = PROJECT_ROOT / "certs" / "127.0.0.1+1-key.pem"
 
-USER_CONFIG_DIR = Path.home() / ".config" / "voitta-compute"
+USER_CONFIG_DIR = Path.home() / ".config" / "voitta-bookmarklet"
 USER_SETTINGS_PATH = USER_CONFIG_DIR / "settings.json"
 
 
@@ -127,7 +127,7 @@ DOCS_DIR = PROJECT_ROOT.parent / "docs"
 # Third-party docs pulled in at INSTALL time by a plugin's manifest
 # ``docs_repo`` (see installer.sync_plugin_docs). Deliberately a sibling of
 # plugins/ rather than a subdir of it: the launcher rmtree's and re-seeds
-# plugins/ on every start (src/voitta_compute/__main__.py), so anything
+# plugins/ on every start (src/voitta_bookmarklet/__main__.py), so anything
 # cloned inside it would be destroyed and re-fetched each launch. This
 # mirrors how lib-sources/ persists across launches.
 #   plugin-docs/<plugin>/      converted markdown — indexed into the docs corpus

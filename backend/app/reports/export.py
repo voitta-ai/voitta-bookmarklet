@@ -157,7 +157,7 @@ def _readme(slug: str, render_id: str, title: str | None, report: ExportReport) 
         lines.append("The report is fully self-contained; it works offline.")
     lines += [
         "",
-        f"Exported from Voitta Compute on {when}.",
+        f"Exported from Voitta Bookmarklet on {when}.",
         f"Script: {slug}   Render: {render_id}",
     ]
     if report.inlined:

@@ -1,7 +1,7 @@
 """The agent's system prompt for a page — one composer for every surface.
 
 Used by the in-app chat (both engines) and by the external-agent tool
-surface on ``/mcp`` (``vc_instructions``), so an external agent works from
+surface on ``/mcp`` (``vb_instructions``), so an external agent works from
 exactly the instructions the in-app agent gets.
 """
 

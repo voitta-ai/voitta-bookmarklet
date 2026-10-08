@@ -7,7 +7,7 @@ two differences:
   shows (streamed text, one step per tool call, notices, full-size
   screenshots) goes through a :class:`TurnSink`. :class:`ChainlitSink`
   renders it as ``cl.Message``/``cl.Step`` exactly as before; other
-  transports (an eval API, voitta-compute#14) supply their own sink.
+  transports (an eval API, voitta-bookmarklet#14) supply their own sink.
   History is the ``messages`` list, which the caller owns and the loop
   mutates in place.
 * The "browser-side" tools we used to dispatch via the bridge bus now

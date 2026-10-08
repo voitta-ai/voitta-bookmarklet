@@ -174,7 +174,7 @@ def _ssl_context() -> ssl.SSLContext:
 
 def _download_with_progress(url: str, dest: Path, progress_cb: ProgressCb, label: str) -> None:
     """Stream ``url`` to ``dest`` reporting (bytes_done, bytes_total)."""
-    req = urllib.request.Request(url, headers={"User-Agent": "voitta-compute"})
+    req = urllib.request.Request(url, headers={"User-Agent": "voitta-bookmarklet"})
     with urllib.request.urlopen(req, timeout=60, context=_ssl_context()) as resp:
         total = int(resp.headers.get("Content-Length") or 0)
         done = 0

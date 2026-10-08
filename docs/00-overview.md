@@ -1,6 +1,6 @@
 # Overview
 
-Voitta Compute is a local AI assistant that runs on your Mac and injects a chat widget into any browser tab via a bookmarklet.
+Voitta Bookmarklet is a local AI assistant that runs on your Mac and injects a chat widget into any browser tab via a bookmarklet.
 
 ## What it does
 
@@ -26,8 +26,8 @@ Voitta Compute is a local AI assistant that runs on your Mac and injects a chat 
 | Widget injection | Bookmarklet, shadow DOM |
 | LLM providers | Anthropic, OpenAI, Gemini |
 | Report screenshots | `html-to-image` (SVG foreignObject) |
-| Persistence | SQLite at `~/Library/Application Support/Voitta Compute/backend/conversations.sqlite` |
-| Settings | JSON at `~/.config/voitta-compute/settings.json` |
+| Persistence | SQLite at `~/Library/Application Support/Voitta Bookmarklet/backend/conversations.sqlite` |
+| Settings | JSON at `~/.config/voitta-bookmarklet/settings.json` |
 
 ## Key entry points
 

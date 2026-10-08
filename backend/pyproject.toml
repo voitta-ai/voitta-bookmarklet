@@ -1,7 +1,7 @@
 [project]
-name = "voitta-compute-backend"
+name = "voitta-bookmarklet-backend"
 version = "0.1.0"
-description = "Voitta Compute backend — Chainlit-driven chat with agent-loop tool-use."
+description = "Voitta Bookmarklet backend — Chainlit-driven chat with agent-loop tool-use."
 license = {text = "GNU Affero General Public License v3 or later (AGPLv3+)"}
 requires-python = ">=3.11"
 dependencies = [

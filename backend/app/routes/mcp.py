@@ -1,7 +1,7 @@
 """Mount the embedded FastMCP server at ``/mcp``.
 
 It carries three tool families (see ``app.services.mcp_server``): the
-``mcp_*`` debugging tools, the ``vc_*`` agent tools (the tool registry,
+``mcp_*`` debugging tools, the ``vb_*`` agent tools (the tool registry,
 for external agents) and ``mcp_inject_text`` (messages to the in-app
 agent). Streamable-HTTP transport on the existing FastAPI listener — no
 new port. Three layers of gate, in order:

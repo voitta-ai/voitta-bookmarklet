@@ -1085,7 +1085,7 @@ class VoittaMenuBarApp(rumps.App):
             f"MCP endpoint · URL: {mcp_url}\n"
             f"           Transport: streamable-http (loopback only)\n"
             f"           Debugging tools (mcp_*): {'on' if mcp_on else 'off'}\n"
-            f"           Agent tools for external agents (vc_*): {'on' if tools_on else 'off'}\n"
+            f"           Agent tools for external agents (vb_*): {'on' if tools_on else 'off'}\n"
             f"           Messages to the in-app agent: {'on' if chat_on else 'off'}"
         )
 
@@ -1472,10 +1472,10 @@ def main() -> None:
     os.environ.setdefault("CHAINLIT_APP_ROOT", str(PROJECT_ROOT.parent))
 
 
-    # The frozen .app bundles the frontend under voitta_compute/resources/.
+    # The frozen .app bundles the frontend under voitta_bookmarklet/resources/.
     # Set VOITTA_FRONTEND_DIST so app.config.FRONTEND_DIST resolves correctly
     # before any import of app.config happens inside the uvicorn worker.
-    _bundle_fe = Path(__file__).resolve().parents[2] / "voitta_compute" / "resources" / "frontend_dist"
+    _bundle_fe = Path(__file__).resolve().parents[2] / "voitta_bookmarklet" / "resources" / "frontend_dist"
     if _bundle_fe.is_dir():
         os.environ.setdefault("VOITTA_FRONTEND_DIST", str(_bundle_fe))
 

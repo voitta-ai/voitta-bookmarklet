@@ -1,5 +1,5 @@
 {
-  "name": "voitta-compute-frontend",
+  "name": "voitta-bookmarklet-frontend",
   "private": true,
   "version": "0.1.0",
   "type": "module",

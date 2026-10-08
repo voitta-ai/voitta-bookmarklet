@@ -17,7 +17,7 @@ import os
 import sys
 
 URL = "https://mcp.getrunpod.io/"
-MANIFEST = "/Users/roman/DEVEL/voitta-compute/plugins/runpod/manifest.json"
+MANIFEST = os.path.join(os.path.dirname(os.path.abspath(__file__)), "manifest.json")
 
 
 async def main() -> int:

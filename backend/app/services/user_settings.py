@@ -28,7 +28,7 @@ from typing import Any
 
 
 # Sourced from ``app.config`` so the chainlit build keeps its own
-# settings file (``~/.config/voitta-compute/settings.json``)
+# settings file (``~/.config/voitta-bookmarklet/settings.json``)
 # rather than clobbering / inheriting the legacy bookmarklet's blob.
 from app.config import USER_CONFIG_DIR, USER_SETTINGS_PATH
 
@@ -75,7 +75,7 @@ def set_mcp_debug_enabled(enabled: bool) -> None:
 
 
 def mcp_tools_enabled() -> bool:
-    """Whether ``/mcp`` also exposes the agent's tool registry (the ``vc_*``
+    """Whether ``/mcp`` also exposes the agent's tool registry (the ``vb_*``
     tools) so an external agent — Claude Code, say — can drive everything
     the in-app agent can, without an API key in the app. Default **False**,
     and separate from the debugging switch: this surface runs Python

@@ -5,14 +5,14 @@ start of every description, and the server instructions:
 
   * ``mcp_*`` — **debugging** (this module): inspect and poke the app —
     raw JS in a tab, page HTML, screenshots, devtools capture.
-  * ``vc_*`` — **agent tools** (:mod:`app.services.mcp_registry`): the
+  * ``vb_*`` — **agent tools** (:mod:`app.services.mcp_registry`): the
     tool registry the in-app agent uses, for an external agent to drive.
 
 Mounted at ``/mcp`` (streamable-HTTP transport on the existing FastAPI
 listener — no second port). Gated by:
 
   * per family, its own user setting (tray-bar toggles):
-    ``mcpDebugEnabled`` for ``mcp_*``, ``mcpToolsEnabled`` for ``vc_*`` —
+    ``mcpDebugEnabled`` for ``mcp_*``, ``mcpToolsEnabled`` for ``vb_*`` —
     a family that's off is neither listed nor callable (``_FamilyGate``)
   * Loopback-only peer (127.0.0.1 / ::1)
   * No browser ``Origin`` header (use a CLI/desktop MCP client, not
@@ -247,16 +247,16 @@ def _eval_timeout_s(await_ms: int) -> float:
 
 
 _INSTRUCTIONS = """\
-Voitta Compute — the local app behind the Voitta bookmarklet. Its tools
-come in two families; use the one that matches the job.
+Voitta Bookmarklet — the local Mac app behind the Voitta browser bookmarklet.
+Its tools come in two families; use the one that matches the job.
 
-AGENT TOOLS (vc_*) — do the user's work. The same tool registry the in-app
+AGENT TOOLS (vb_*) — do the user's work. The same tool registry the in-app
 Voitta agent uses (reports, LinkedIn, eBay, Google, projects, Python via
 run_script, …), so you can act as that agent. Workflow:
-  1. vc_sessions — pick the page (bookmarklet tab) to work on.
-  2. vc_instructions — read the agent's rules for that page. Follow them.
-  3. vc_list_tools, then vc_describe_tools for the tools you'll use.
-  4. vc_call_tool(name, arguments, session_id).
+  1. vb_sessions — pick the page (bookmarklet tab) to work on.
+  2. vb_instructions — read the agent's rules for that page. Follow them.
+  3. vb_list_tools, then vb_describe_tools for the tools you'll use.
+  4. vb_call_tool(name, arguments, session_id).
 
 DEBUGGING TOOLS (mcp_*) — inspect and poke the app itself: raw JavaScript
 in a tab (mcp_eval), the page HTML, screenshots, console/network capture.
@@ -311,13 +311,13 @@ class _FamilyGate(Middleware):
 
 def get_server() -> FastMCP:
     """Lazy singleton — FastMCP instance with both tool families: the
-    ``mcp_*`` debugging tools below and the ``vc_*`` agent tools
+    ``mcp_*`` debugging tools below and the ``vb_*`` agent tools
     (:mod:`app.services.mcp_registry`)."""
     global _SERVER
     if _SERVER is not None:
         return _SERVER
 
-    mcp = FastMCP("voitta-compute", instructions=_INSTRUCTIONS, middleware=[_FamilyGate()])
+    mcp = FastMCP("voitta-bookmarklet", instructions=_INSTRUCTIONS, middleware=[_FamilyGate()])
 
     from app.services.mcp_registry import register as register_agent_tools
 
@@ -405,7 +405,7 @@ def get_server() -> FastMCP:
     ) -> dict:
         """[Debugging] Run arbitrary JavaScript in a bookmarklet tab. For
         inspecting the app — to do a user's task use the agent tools
-        (vc_call_tool), which carry validation and the agent's rules.
+        (vb_call_tool), which carry validation and the agent's rules.
 
         The code body is wrapped in an ``AsyncFunction`` — ``await`` at
         top level works, and ``return X`` sends ``X`` back. Console

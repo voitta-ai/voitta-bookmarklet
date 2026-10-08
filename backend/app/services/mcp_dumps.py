@@ -4,7 +4,7 @@ Large MCP payloads (page HTML, devtools logs) are written here instead of
 being returned inline. The MCP tool returns the file path; the caller reads
 it with Claude Code's Read tool.
 
-Dump directory:  ~/Library/Application Support/Voitta Compute/mcp_dumps/
+Dump directory:  ~/Library/Application Support/Voitta Bookmarklet/mcp_dumps/
 Lifetime:        cleared on every app launch (see __main__.py).
 Naming:          {session8}_{label}_{unix_ms}{suffix}
 """
@@ -27,7 +27,7 @@ def _dumps_dir() -> Path:
         d = Path(root) / "mcp_dumps"
     else:
         # Dev / test fallback — use a sibling of the project root.
-        d = Path.home() / "Library" / "Application Support" / "Voitta Compute" / "mcp_dumps"
+        d = Path.home() / "Library" / "Application Support" / "Voitta Bookmarklet" / "mcp_dumps"
     d.mkdir(parents=True, exist_ok=True)
     return d
 

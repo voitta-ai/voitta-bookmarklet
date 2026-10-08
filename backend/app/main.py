@@ -89,7 +89,7 @@ async def _lifespan(_app: FastAPI):
         yield
 
 
-app = FastAPI(title="voitta-compute", lifespan=_lifespan)
+app = FastAPI(title="voitta-bookmarklet", lifespan=_lifespan)
 
 
 # ── Login guard (server mode only) ────────────────────────────────────────
@@ -267,7 +267,7 @@ app.include_router(google_router)
 app.include_router(workspace_router)
 app.include_router(agent_sdk_router)
 
-# Eval API (voitta-compute#19): mounted only when VOITTA_EVAL_TOKENS is set.
+# Eval API (voitta-bookmarklet#19): mounted only when VOITTA_EVAL_TOKENS is set.
 from app.eval import config as _eval_config  # noqa: E402
 
 if _eval_config.enabled():
@@ -1316,8 +1316,8 @@ def _serve_node_module(rel_path: str, package_label: str) -> FileResponse:
 
     # 1. Bundle resources (frozen .app)
     try:
-        import voitta_compute
-        bundle = Path(voitta_compute.__file__).resolve().parent / "resources" / "vendor_js" / filename
+        import voitta_bookmarklet
+        bundle = Path(voitta_bookmarklet.__file__).resolve().parent / "resources" / "vendor_js" / filename
         if bundle.is_file():
             return FileResponse(
                 bundle, media_type="application/javascript",

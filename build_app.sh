@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the Voitta Compute menu-bar .app via briefcase.
+# Build the Voitta Bookmarklet menu-bar .app via briefcase.
 #
 # Lives at the repo root because briefcase writes build/ and dist/
 # next to its manifest (also at the repo root).
@@ -18,8 +18,8 @@
 #   roman semeine (KU3WTX9RXB)``.
 #
 # Output:
-#   build/voitta-compute/macos/app/Voitta Compute.app
-#   dist/Voitta Compute-<VERSION>.dmg   (with --package or --release)
+#   build/voitta-bookmarklet/macos/app/Voitta Bookmarklet.app
+#   dist/Voitta Bookmarklet-<VERSION>.dmg   (with --package or --release)
 #
 # Notarisation prerequisite (one-time):
 #   xcrun notarytool store-credentials voitta-notary \
@@ -122,7 +122,7 @@ echo "[build_app] building version $VERSION"
 
 # Stamp the version into the package so the frozen .app can read it at runtime
 # without relying on importlib.metadata (which may not be wired up by briefcase).
-echo "__version__ = \"$VERSION\"" > "$ROOT/src/voitta_compute/_version.py"
+echo "__version__ = \"$VERSION\"" > "$ROOT/src/voitta_bookmarklet/_version.py"
 
 # ---------------------------------------------------------------------------
 # 3. Build frontend
@@ -176,9 +176,9 @@ _build_wheel_from_sdist "lazify-"     "Lazify==0.4.0"
 _build_wheel_from_sdist "cuid-"       "cuid<0.5,>=0.4"
 
 # ---------------------------------------------------------------------------
-# 5. Stage resources into src/voitta_compute/resources/
+# 5. Stage resources into src/voitta_bookmarklet/resources/
 # ---------------------------------------------------------------------------
-RES="$ROOT/src/voitta_compute/resources"
+RES="$ROOT/src/voitta_bookmarklet/resources"
 echo "[build_app] staging resources → $RES"
 
 # 5a. Frontend bundle
@@ -238,10 +238,10 @@ echo "[build_app] briefcase update (or create on first run)…"
 # Test for the actual generated bundle, NOT just build/ — a build dir
 # whose briefcase scaffold was removed (post-clean state) makes `update`
 # fail with FileNotFoundError while the pipe masks the exit code.
-if [ -d "$ROOT/build/voitta-compute/macos/app/Voitta Compute.app" ]; then
+if [ -d "$ROOT/build/voitta-bookmarklet/macos/app/Voitta Bookmarklet.app" ]; then
   "$BRIEFCASE" update macOS app 2>&1 | grep -v "^$" | sed 's/^/  /'
 else
-  rm -rf "$ROOT/build/voitta-compute"
+  rm -rf "$ROOT/build/voitta-bookmarklet"
   "$BRIEFCASE" create macOS app 2>&1 | grep -v "^$" | sed 's/^/  /'
 fi
 
@@ -252,7 +252,7 @@ fi
 # it makes the app lie about which build it is. Stamp it here, BEFORE
 # `briefcase build` — that step ad-hoc signs the bundle, so editing Info.plist
 # afterwards would invalidate the signature it just applied.
-_PLIST="$ROOT/build/voitta-compute/macos/app/Voitta Compute.app/Contents/Info.plist"
+_PLIST="$ROOT/build/voitta-bookmarklet/macos/app/Voitta Bookmarklet.app/Contents/Info.plist"
 if [ -f "$_PLIST" ]; then
   for _key in CFBundleShortVersionString CFBundleVersion; do
     /usr/libexec/PlistBuddy -c "Set :$_key $VERSION" "$_PLIST" 2>/dev/null \
@@ -265,7 +265,7 @@ fi
 echo "[build_app] briefcase build…"
 "$BRIEFCASE" build macOS app 2>&1 | grep -v "^$" | sed 's/^/  /'
 
-echo "[build_app] .app built: build/voitta-compute/macos/app/Voitta Compute.app"
+echo "[build_app] .app built: build/voitta-bookmarklet/macos/app/Voitta Bookmarklet.app"
 
 # ---------------------------------------------------------------------------
 # 7. Package (DMG) + signing + notarisation

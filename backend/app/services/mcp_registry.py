@@ -3,18 +3,18 @@
 The in-app agent works through the tool registry (``app.tools.registry``).
 This module exposes that same registry on the app's MCP endpoint, so an
 external agent (Claude Code, say) can do everything the in-app agent can
-— with the app holding no API key. The ``vc_*`` tools here are a thin
+— with the app holding no API key. The ``vb_*`` tools here are a thin
 door onto it:
 
-  * ``vc_sessions``       — open pages (bookmarklet tabs) a call can target
-  * ``vc_instructions``   — the system prompt the in-app agent gets there
-  * ``vc_list_tools``     — the tools available on that page
-  * ``vc_describe_tools`` — full descriptions + input schemas
-  * ``vc_call_tool``      — validate and run one tool
+  * ``vb_sessions``       — open pages (bookmarklet tabs) a call can target
+  * ``vb_instructions``   — the system prompt the in-app agent gets there
+  * ``vb_list_tools``     — the tools available on that page
+  * ``vb_describe_tools`` — full descriptions + input schemas
+  * ``vb_call_tool``      — validate and run one tool
 
 Calls go through ``registry.dispatch`` exactly like the in-app agent's. A
 tool that works in the page (``side="hybrid"``) needs the tab's Chainlit
-context, which an MCP request lacks; ``vc_call_tool`` binds the target
+context, which an MCP request lacks; ``vb_call_tool`` binds the target
 session's context first — the same rebind ``ask_user_question`` does.
 
 Differences from the in-app harness: ``ask_user_question`` is not offered
@@ -48,7 +48,7 @@ _EXCLUDED = frozenset({"ask_user_question"})
 # Same default per-tool ceiling as the in-app agent's bridge.
 _TOOL_TIMEOUT_S = 150.0
 
-FAMILY_PREFIX = "vc_"
+FAMILY_PREFIX = "vb_"
 
 AGENT_TOOLS_TAG = "[Agent tools]"
 
@@ -99,7 +99,7 @@ def _resolve(session_id: str | None) -> _Target | dict[str, Any]:
     if ws is None:
         return {"ok": False, "error": "no_session",
                 "message": f"no open page with session_id {session_id!r} — "
-                           "see vc_sessions (the tab may have been closed or reloaded)",
+                           "see vb_sessions (the tab may have been closed or reloaded)",
                 "sessions": _live_sessions()}
     rec = cl_sessions.get(session_id)
     host = rec.host if rec else None
@@ -176,7 +176,7 @@ async def _dispatch(target: _Target, name: str, args: dict[str, Any],
 # ---- the tools ---------------------------------------------------------------
 
 
-async def vc_sessions() -> dict[str, Any]:
+async def vb_sessions() -> dict[str, Any]:
     rows = _live_sessions()
     return {"ok": True, "count": len(rows), "sessions": rows,
             "note": "Pass a session_id to target a page; omitted, calls use the "
@@ -184,7 +184,7 @@ async def vc_sessions() -> dict[str, Any]:
                     "server-side tools are available."}
 
 
-async def vc_instructions(session_id: str | None = None) -> dict[str, Any]:
+async def vb_instructions(session_id: str | None = None) -> dict[str, Any]:
     target = _resolve(session_id)
     if isinstance(target, dict):
         return target
@@ -196,7 +196,7 @@ async def vc_instructions(session_id: str | None = None) -> dict[str, Any]:
     preface = (
         "These are the instructions the in-app Voitta agent works under on "
         f"this page (host {target.host or 'none'}). Follow them when driving "
-        "the vc_* tools. Differences for you: ask your own user instead of "
+        "the vb_* tools. Differences for you: ask your own user instead of "
         "ask_user_question (not available here), and your tool calls don't "
         "show in the page's chat pane."
     )
@@ -204,7 +204,7 @@ async def vc_instructions(session_id: str | None = None) -> dict[str, Any]:
             "instructions": f"{preface}\n\n{prompt}"}
 
 
-async def vc_list_tools(session_id: str | None = None) -> dict[str, Any]:
+async def vb_list_tools(session_id: str | None = None) -> dict[str, Any]:
     target = _resolve(session_id)
     if isinstance(target, dict):
         return target
@@ -214,11 +214,11 @@ async def vc_list_tools(session_id: str | None = None) -> dict[str, Any]:
              for s in sorted(_visible(target.host), key=lambda s: s.name)]
     return {"ok": True, "session_id": target.session_id, "host": target.host,
             "count": len(tools), "tools": tools,
-            "next": "vc_describe_tools(names=[...]) for full descriptions and "
-                    "input schemas, then vc_call_tool(name, arguments)."}
+            "next": "vb_describe_tools(names=[...]) for full descriptions and "
+                    "input schemas, then vb_call_tool(name, arguments)."}
 
 
-async def vc_describe_tools(names: list[str], session_id: str | None = None) -> dict[str, Any]:
+async def vb_describe_tools(names: list[str], session_id: str | None = None) -> dict[str, Any]:
     target = _resolve(session_id)
     if isinstance(target, dict):
         return target
@@ -234,11 +234,11 @@ async def vc_describe_tools(names: list[str], session_id: str | None = None) -> 
     res: dict[str, Any] = {"ok": True, "host": target.host, "tools": out}
     if missing:
         res["not_available"] = missing
-        res["hint"] = "not offered on this page — check vc_list_tools for this session"
+        res["hint"] = "not offered on this page — check vb_list_tools for this session"
     return res
 
 
-async def vc_call_tool(name: str, arguments: dict[str, Any] | None = None,
+async def vb_call_tool(name: str, arguments: dict[str, Any] | None = None,
                        session_id: str | None = None) -> ToolResult:
     # FastMCP marks a result as an error only when the tool raises; the
     # envelope travels as the error text (JSON, like every other result).
@@ -253,7 +253,7 @@ async def vc_call_tool(name: str, arguments: dict[str, Any] | None = None,
         why = ("asks the user in the in-app chat — ask your own user instead"
                if name in _EXCLUDED else
                f"not available on this page (host {target.host or 'none'})")
-        return fail("unknown_tool", f"{name!r}: {why}. See vc_list_tools.")
+        return fail("unknown_tool", f"{name!r}: {why}. See vb_list_tools.")
     args = dict(arguments or {})
     try:
         validate_arguments(args, spec.input_schema)
@@ -263,17 +263,17 @@ async def vc_call_tool(name: str, arguments: dict[str, Any] | None = None,
     if spec.side == "hybrid" and target.ws is None:
         return fail("no_page", f"{name!r} works in the user's page and no page is open — "
                     "ask the user to open the site with the Voitta bookmarklet, then "
-                    "check vc_sessions.")
+                    "check vb_sessions.")
 
     limit = float(spec.timeout_s or _TOOL_TIMEOUT_S)
-    _log.info("vc_call_tool %s session=%s host=%s", name, target.session_id, target.host)
+    _log.info("vb_call_tool %s session=%s host=%s", name, target.session_id, target.host)
     try:
         res = await _dispatch(target, name, args, limit)
     except (TimeoutError, asyncio.TimeoutError):
         return fail("timeout", f"{name!r} exceeded {int(limit)}s and was aborted — "
                     "try a smaller request")
     except Exception as exc:  # noqa: BLE001 — surface, don't crash the session
-        _log.exception("vc_call_tool %s raised", name)
+        _log.exception("vb_call_tool %s raised", name)
         return fail("tool_crashed", f"{type(exc).__name__}: {exc}")
     if res.ok:
         # Content blocks as-is, so images arrive as images.
@@ -286,24 +286,24 @@ def register(mcp: Any) -> None:
     """Add the agent-tools family to the FastMCP server."""
     tag = AGENT_TOOLS_TAG
 
-    mcp.tool(name="vc_sessions", description=(
+    mcp.tool(name="vb_sessions", description=(
         f"{tag} The pages (bookmarklet tabs) agent tools can act on: session_id, "
-        "host, url, title, and which is active. Start here."))(vc_sessions)
-    mcp.tool(name="vc_instructions", description=(
+        "host, url, title, and which is active. Start here."))(vb_sessions)
+    mcp.tool(name="vb_instructions", description=(
         f"{tag} The system prompt the in-app Voitta agent works under on a page "
         "(plugin rules, the active project). Read it before using the other "
-        "vc_* tools on that page — the tools assume it. session_id optional "
-        "(defaults to the active page)."))(vc_instructions)
-    mcp.tool(name="vc_list_tools", description=(
+        "vb_* tools on that page — the tools assume it. session_id optional "
+        "(defaults to the active page)."))(vb_instructions)
+    mcp.tool(name="vb_list_tools", description=(
         f"{tag} The Voitta tools available on a page — the same set the in-app "
         "agent gets there (they depend on the site: LinkedIn, eBay, Google, …). "
-        "Name, one-line summary, and needs_page. session_id optional."))(vc_list_tools)
-    mcp.tool(name="vc_describe_tools", description=(
+        "Name, one-line summary, and needs_page. session_id optional."))(vb_list_tools)
+    mcp.tool(name="vb_describe_tools", description=(
         f"{tag} Full description and JSON input schema for the named tools. "
         "Read a tool's description before its first call — they carry "
-        "contracts the schema doesn't."))(vc_describe_tools)
-    mcp.tool(name="vc_call_tool", description=(
+        "contracts the schema doesn't."))(vb_describe_tools)
+    mcp.tool(name="vb_call_tool", description=(
         f"{tag} Run one Voitta tool exactly as the in-app agent would, with its "
         "result (text and images). arguments must match the tool's input "
-        "schema (vc_describe_tools). Page tools run in the user's open tab; "
-        "server tools run in the app."))(vc_call_tool)
+        "schema (vb_describe_tools). Page tools run in the user's open tab; "
+        "server tools run in the app."))(vb_call_tool)

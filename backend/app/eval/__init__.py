@@ -1,4 +1,4 @@
-"""Evaluation API (voitta-compute#19): unattended, traced runs of the agent loop.
+"""Evaluation API (voitta-bookmarklet#19): unattended, traced runs of the agent loop.
 
 Off unless ``VOITTA_EVAL_TOKENS`` is set. An eval session drives the same
 ``app.agent.run_turn`` the chat UI uses, with its own sink (a durable,
