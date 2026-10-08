@@ -1,11 +1,172 @@
 # Voitta Compute
 
-LLM assistant injected into any web page via a bookmarklet. Chainlit
-owns the chat context; the React frontend talks to it through
-`@chainlit/react-client`. Single FastAPI process at `127.0.0.1:12358`
-serves both the Chainlit socket and the built bookmarklet bundle.
+An AI assistant you open on any web page with a bookmarklet. It reads the
+page you are on, runs Python for analysis and reports, and keeps your
+conversations and projects on your own machine. Bring your own model: an
+Anthropic, OpenAI, Gemini or Requesty API key, or a Claude subscription.
 
-## Layout
+## Contents
+
+- [Quick start (Docker)](#quick-start-docker)
+- [First run](#first-run)
+  - [Install the bookmarklet](#install-the-bookmarklet)
+  - [Choose a model](#choose-a-model)
+  - [Optional: HTTPS for the standard bookmarklet](#optional-https-for-the-standard-bookmarklet)
+- [Other ways to run it](#other-ways-to-run-it)
+  - [From source (macOS or Linux)](#from-source-macos-or-linux)
+  - [macOS menu-bar app](#macos-menu-bar-app)
+  - [Shared server with Google sign-in](#shared-server-with-google-sign-in)
+- [Upgrade, back up, remove](#upgrade-back-up-remove)
+- [Configuration](#configuration)
+- [Development](#development)
+  - [Layout](#layout)
+  - [lib-sources: vendored libraries](#lib-sources-vendored-libraries)
+  - [RAG](#rag)
+  - [MCP debugging](#mcp-debugging)
+  - [Docs](#docs)
+  - [Tests](#tests)
+- [License](#license)
+
+## Quick start (Docker)
+
+You need Docker (Docker Desktop, Rancher Desktop, or Docker Engine on Linux).
+Nothing else is installed on your machine.
+
+```bash
+docker run -d --name voitta-compute --restart unless-stopped \
+  -p 127.0.0.1:12358:12358 -p 127.0.0.1:12359:12359 \
+  -v voitta-compute-data:/data \
+  ghcr.io/voitta-ai/voitta-compute:latest
+```
+
+Then open <http://127.0.0.1:12358/bookmarklets> and continue with
+[First run](#first-run).
+
+- Keep the `127.0.0.1:` prefix on both ports. A single-user install has no
+  login, so it must not be reachable from other machines.
+- Everything you create (conversations, projects, scripts, settings, API
+  keys) lives in the `voitta-compute-data` volume, not in the container.
+- To build the image yourself instead of pulling it:
+  `git clone https://github.com/voitta-ai/voitta-compute && cd voitta-compute && docker build -t voitta-compute .`,
+  then use `voitta-compute` as the image name above.
+
+## First run
+
+### Install the bookmarklet
+
+Open <http://127.0.0.1:12358/bookmarklets>. It offers two bookmarklets. Drag
+the one you need to your bookmarks bar:
+
+- **Voitta (Salesforce)**, the bridge bookmarklet, works on any page without
+  certificates. It opens a small popup window that relays to the backend, so
+  allow pop-ups for the site the first time. **Use this one with Docker
+  unless you set up HTTPS.**
+- **Voitta**, the standard bookmarklet, loads the assistant straight into the
+  page. Browsers block a web page from loading scripts from `http://127.0.0.1`,
+  so this one needs [HTTPS](#optional-https-for-the-standard-bookmarklet).
+
+Click the bookmarklet on any page. The assistant panel opens beside it.
+
+### Choose a model
+
+The first time it opens, the panel shows Settings (the gear icon brings it
+back later). Pick a provider and paste its API key. Anthropic, OpenAI, Google
+Gemini and Requesty are supported. If you have a Claude Pro or Max
+subscription, choose **Claude (subscription)** if it is listed, and paste a
+token from `claude setup-token`.
+
+Keys are stored in `settings.json` in your data directory (the data volume
+under Docker).
+
+### Optional: HTTPS for the standard bookmarklet
+
+Use [mkcert](https://github.com/FiloSottile/mkcert) to create a certificate
+your browser trusts for `127.0.0.1`, and mount it into the container:
+
+```bash
+mkcert -install                        # once per machine
+mkdir -p ~/.voitta-certs && cd ~/.voitta-certs
+mkcert -cert-file 127.0.0.1+1.pem -key-file 127.0.0.1+1-key.pem 127.0.0.1 localhost
+
+docker rm -f voitta-compute
+docker run -d --name voitta-compute --restart unless-stopped \
+  -p 127.0.0.1:12358:12358 -p 127.0.0.1:12359:12359 \
+  -v voitta-compute-data:/data \
+  -v ~/.voitta-certs:/app/backend/certs:ro \
+  ghcr.io/voitta-ai/voitta-compute:latest
+```
+
+The backend then serves `https://127.0.0.1:12358`. Open
+<https://127.0.0.1:12358/bookmarklets> again and drag the standard
+bookmarklet. The bridge port, 12359, stays plain HTTP by design.
+
+## Other ways to run it
+
+### From source (macOS or Linux)
+
+Needs Python 3.11+, Node.js 20+ and git.
+
+```bash
+git clone https://github.com/voitta-ai/voitta-compute
+cd voitta-compute
+git submodule update --init --recursive --depth 1   # optional: source for the code RAG corpus
+./build.sh                                          # frontend bundle + backend venv
+./start.sh                                          # http://127.0.0.1:12358
+```
+
+For the standard bookmarklet, create the TLS pair in `backend/certs/` before
+`./start.sh`. The pair is per-machine and git-ignored:
+
+```bash
+mkcert -install
+mkdir -p backend/certs && (cd backend/certs && \
+  mkcert -cert-file 127.0.0.1+1.pem -key-file 127.0.0.1+1-key.pem 127.0.0.1 localhost)
+```
+
+Data defaults to `~/Library/Application Support/Voitta Compute/backend`. Set
+`VOITTA_DATA_ROOT` to put it elsewhere.
+
+### macOS menu-bar app
+
+`./tray.sh` runs the same backend from a menu-bar icon. The menu has About,
+Open, Copy bookmarklet, Settings (with the MCP-debug toggle), Show data
+folder, (Re)create TLS certs, Reset and Quit. `./build_app.sh` packages it as
+`Voitta Compute.app`. See [OPERATIONS.md §15](OPERATIONS.md#15-packaging--release).
+
+### Shared server with Google sign-in
+
+`./server-start.sh` sets up a headless Linux server: it builds, indexes the
+docs and serves plain HTTP for a reverse proxy that terminates TLS. Copy
+`.env.example` to `.env` and set the Google sign-in client to require login.
+Each user then gets their own data. See [OPERATIONS.md](OPERATIONS.md).
+
+## Upgrade, back up, remove
+
+```bash
+docker pull ghcr.io/voitta-ai/voitta-compute:latest
+docker rm -f voitta-compute      # the data volume is kept
+# then re-run the docker run command from Quick start
+
+docker run --rm -v voitta-compute-data:/data -v "$PWD":/backup alpine \
+  tar czf /backup/voitta-compute-data.tgz -C /data .     # back up
+
+docker rm -f voitta-compute && docker volume rm voitta-compute-data   # remove everything
+```
+
+## Configuration
+
+Settings are edited in the panel (gear icon). It has a Global tab and one tab
+for each plugin with settings. They are stored in
+`~/.config/voitta-compute/settings.json`, or `/data/config/settings.json`
+under Docker. You don't need to edit that file by hand.
+
+Plugins add site-specific tools and prompts. Six ship today: `default`
+(always on), `ebay`, `google`, `linkedin`, `veed` and `voitta-enterprise`. See
+[docs/05-plugins.md](docs/05-plugins.md).
+
+## Development
+
+### Layout
 
 ```
 voitta-compute/
@@ -13,16 +174,19 @@ voitta-compute/
 ├── frontend/         Vite IIFE bundle, React widget, primitives
 ├── plugins/          Host-scoped extensions (manifest + BE module + FE widget + docs + prompt)
 ├── docs/             *** MASTER COPY of all prose docs ***
-│                     Bundled into the .app by build_app.sh (step 5b).
-│                     DO NOT create or edit docs under src/voitta_compute/resources/docs/ —
-│                     that directory is build-generated and gitignored.
 ├── lib-sources/      Vendored libraries as git submodules (see below)
-├── rag/              Built RAG indexes (gitignored — rebuildable)
+├── rag/              Built RAG indexes (gitignored, rebuildable)
 ├── scripts/          Dev tooling (RAG builder)
-├── start.sh          Run uvicorn directly (dev mode)
+├── Dockerfile        Container image (frontend build + backend + docs RAG)
+├── start.sh          Run uvicorn directly (also the container's entrypoint)
 ├── tray.sh           macOS menu-bar tray (uvicorn on a daemon thread)
 └── build.sh          Install FE deps, build FE bundle, set up BE venv
 ```
+
+Chainlit owns the chat context. The React frontend talks to it through
+`@chainlit/react-client`. One FastAPI process at `127.0.0.1:12358` serves
+both the Chainlit socket and the built bookmarklet bundle. A plain-HTTP
+sibling listener on `:12359` serves the bridge for pages with a strict CSP.
 
 > **Single source of truth for docs:**
 > - Core docs → `docs/`
@@ -32,72 +196,10 @@ voitta-compute/
 > time. The `resources/` subdirectories (`docs/`, `frontend_dist/`,
 > `plugins/`, `vendor_js/`) are gitignored — never edit them directly.
 
-Six plugins ship today: `default` (always-on system prompt), `ebay`,
-`google`, `linkedin`, `veed`, `voitta-enterprise`. See [`docs/05-plugins.md`](docs/05-plugins.md)
-for the plugin model.
+### lib-sources: vendored libraries
 
-## Setup
-
-```bash
-git clone <url> voitta-compute
-cd voitta-compute
-git submodule update --init --recursive --depth 1   # pulls lib-sources/*
-./build.sh
-mkcert -install                                      # once per machine: trust mkcert's local CA
-mkdir -p backend/certs && (cd backend/certs && \
-  mkcert -cert-file 127.0.0.1+1.pem -key-file 127.0.0.1+1-key.pem 127.0.0.1 localhost)
-```
-
-`build.sh` installs the FE deps, builds the bookmarklet bundle, and
-sets up the BE venv with chromadb, bm25s, fastmcp, rumps, etc.
-The TLS pair in `backend/certs/` is per-machine and git-ignored — without
-it `start.sh` serves plain HTTP, which HTTPS pages block as mixed content.
-
-## Run
-
-**Terminal mode**:
-```bash
-./start.sh                       # https://127.0.0.1:12358
-```
-
-**macOS tray mode** (uvicorn on a daemon thread, rumps owns the main
-thread):
-```bash
-./tray.sh
-```
-
-The tray menu has About / Open / Copy bookmarklet / Settings (with
-the MCP-debug toggle) / Show data folder / (Re)create TLS certs /
-Reset / Quit.
-
-Open `https://127.0.0.1:12358/bookmarklets` and drag **Voitta** to
-your bookmarks bar — or **Voitta (Salesforce)** for strict-CSP sites,
-which loads through the plain-HTTP bridge on `:12359`. The tray's
-Copy bookmarklet items give the same two links.
-
-## Configuration
-
-Per-user settings at
-`~/.config/voitta-compute/settings.json`:
-
-```json
-{
-  "provider": "anthropic",
-  "api_keys": { "anthropic": "sk-ant-..." },
-  "models":   { "anthropic": "claude-sonnet-4-6" },
-  "googleOAuth": { "clientId": "...", "clientSecret": "..." },
-  "plugins": { "voitta-enterprise": { "mcp": { "url": "...", "api_key": "..." } } }
-}
-```
-
-You don't edit this file by hand — open the in-page Settings panel
-(gear icon in the widget), which has tabs for Global + each plugin
-that ships configurable fields.
-
-## `lib-sources/` — vendored libraries
-
-Four libraries live here as git submodules so the LLM can grep
-through their source via the RAG `code` corpus:
+These libraries live here as git submodules so the LLM can grep through
+their source via the RAG `code` corpus:
 
 | Submodule              | Indexed roots                  | Why                          |
 |------------------------|--------------------------------|------------------------------|
@@ -118,7 +220,9 @@ git add lib-sources/<repo>
 git commit -m "Bump <repo> to <sha>"
 ```
 
-## RAG
+The Docker image leaves `lib-sources/` out, so it has the docs corpus only.
+
+### RAG
 
 Two corpora, both Chroma (dense) + bm25s (sparse) with hybrid score
 fusion:
@@ -152,24 +256,30 @@ specific file or pull neighbouring chunks via `rag_get_chunk_range`.
 Indexes live under `rag/.chroma{,_code}/` + `rag/.bm25{,_code}/` —
 gitignored, ~few MB combined, rebuilt in ~1 min.
 
-## MCP debugging
+### MCP debugging
 
 The BE exposes a FastMCP server at `/mcp` for external MCP clients
 (Claude Desktop, `mcp-cli`, etc.). Gated three ways: tray-flag
 (`mcpDebugEnabled` off by default) + loopback-only peer + no browser
 `Origin` header. Tools: `mcp_sessions`, `mcp_page`, `mcp_eval`,
 `mcp_screenshot`. See [`backend/app/services/mcp_server.py`](backend/app/services/mcp_server.py).
+Under Docker the peer is the container bridge, not loopback, so `/mcp`
+refuses it; run from source to use it.
 
-## Docs
+### Docs
 
-[`docs/`](docs/) has seven numbered prose docs (overview,
-architecture, frontend, providers, tool catalogue, plugins, reports).
-They're indexed into the `docs` RAG corpus alongside every plugin's
-`docs/` tree, so the LLM can look up its own design without leaving
-the chat.
+[`docs/`](docs/) has the numbered prose docs (overview, architecture,
+frontend, providers, tool catalogue, plugins, reports, workspace). They're
+indexed into the `docs` RAG corpus alongside every plugin's `docs/` tree,
+so the LLM can look up its own design without leaving the chat.
+[OPERATIONS.md](OPERATIONS.md) is the operator's reference.
 
-## Tests
+### Tests
 
 ```bash
 cd backend && ./.venv/bin/python -m pytest
 ```
+
+## License
+
+[AGPL-3.0-or-later](LICENSE).
