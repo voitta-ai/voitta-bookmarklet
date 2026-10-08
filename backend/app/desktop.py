@@ -163,16 +163,16 @@ def _alert(title=None, message="", ok=None, cancel=None, other=None):
     return raw
 
 
-def _settings_alert_with_switch(
+def _settings_alert_with_switches(
     title: str,
     message: str,
     ok: str,
     cancel: str | None,
-    switch_label: str,
-    switch_on: bool,
-) -> tuple[int, bool]:
-    """NSAlert with an NSSwitch accessory view. Returns
-    ``(rumps-style response, final switch state)``.
+    switches: list[tuple[str, bool]],
+) -> tuple[int, list[bool]]:
+    """NSAlert with a column of labelled NSSwitches as its accessory view.
+    ``switches`` is ``[(label, initially_on), …]``, top to bottom. Returns
+    ``(rumps-style response, final switch states in the same order)``.
 
     Response: ``1`` = ok pressed, ``0`` = cancel pressed (only when
     ``cancel`` is non-None).
@@ -198,18 +198,22 @@ def _settings_alert_with_switch(
     if cancel:
         alert.addButtonWithTitle_(cancel)
 
-    container = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, 320, 28))
-    label = NSTextField.alloc().initWithFrame_(NSMakeRect(0, 4, 240, 20))
-    label.setStringValue_(switch_label)
-    label.setBezeled_(False)
-    label.setDrawsBackground_(False)
-    label.setEditable_(False)
-    label.setSelectable_(False)
-    container.addSubview_(label)
-
-    switch = NSSwitch.alloc().initWithFrame_(NSMakeRect(260, 0, 50, 28))
-    switch.setState_(NSControlStateValueOn if switch_on else NSControlStateValueOff)
-    container.addSubview_(switch)
+    row_h = 32
+    container = NSView.alloc().initWithFrame_(NSMakeRect(0, 0, 340, row_h * len(switches)))
+    controls = []
+    for i, (switch_label, switch_on) in enumerate(switches):
+        y = row_h * (len(switches) - 1 - i)  # AppKit origin is bottom-left
+        label = NSTextField.alloc().initWithFrame_(NSMakeRect(0, y + 4, 270, 20))
+        label.setStringValue_(switch_label)
+        label.setBezeled_(False)
+        label.setDrawsBackground_(False)
+        label.setEditable_(False)
+        label.setSelectable_(False)
+        container.addSubview_(label)
+        switch = NSSwitch.alloc().initWithFrame_(NSMakeRect(280, y, 50, 28))
+        switch.setState_(NSControlStateValueOn if switch_on else NSControlStateValueOff)
+        container.addSubview_(switch)
+        controls.append(switch)
     alert.setAccessoryView_(container)
 
     nsapp = NSApplication.sharedApplication()
@@ -234,8 +238,7 @@ def _settings_alert_with_switch(
 
     # NSAlert returns 1000 + button-index. Map to rumps codes.
     response = 1 if raw == 1000 else (0 if raw == 1001 else int(raw))
-    new_state = bool(switch.state() == NSControlStateValueOn)
-    return response, new_state
+    return response, [bool(s.state() == NSControlStateValueOn) for s in controls]
 
 
 # ---------------------------------------------------------------------------
@@ -1075,10 +1078,15 @@ class VoittaMenuBarApp(rumps.App):
             activity_line = "Activity ·  idle"
 
         mcp_on = _us.mcp_debug_enabled()
+        tools_on = _us.mcp_tools_enabled()
+        chat_on = _us.mcp_chat_enabled()
         mcp_url = f"{_server_url()}/mcp/"
         mcp_dbg_line = (
-            f"MCP-debug · URL: {mcp_url}\n"
-            f"           Transport: streamable-http (loopback only)"
+            f"MCP endpoint · URL: {mcp_url}\n"
+            f"           Transport: streamable-http (loopback only)\n"
+            f"           Debugging tools (mcp_*): {'on' if mcp_on else 'off'}\n"
+            f"           Agent tools for external agents (vc_*): {'on' if tools_on else 'off'}\n"
+            f"           Messages to the in-app agent: {'on' if chat_on else 'off'}"
         )
 
         body = (
@@ -1093,17 +1101,26 @@ class VoittaMenuBarApp(rumps.App):
             "live in the bookmarklet sidebar. Click the gear icon there."
         )
 
-        response, new_mcp = _settings_alert_with_switch(
+        response, (new_mcp, new_tools, new_chat) = _settings_alert_with_switches(
             title=APP_NAME,
             message=body,
             ok="Close",
             cancel=None,
-            switch_label="Enable MCP debugging endpoint",
-            switch_on=mcp_on,
+            switches=[
+                ("Enable MCP debugging tools", mcp_on),
+                ("Expose agent tools to external agents", tools_on),
+                ("Let external agents message the in-app agent", chat_on),
+            ],
         )
         if new_mcp != mcp_on:
             _us.set_mcp_debug_enabled(new_mcp)
             self._log.info("MCP debug toggle: %s → %s", mcp_on, new_mcp)
+        if new_tools != tools_on:
+            _us.set_mcp_tools_enabled(new_tools)
+            self._log.info("MCP agent-tools toggle: %s → %s", tools_on, new_tools)
+        if new_chat != chat_on:
+            _us.set_mcp_chat_enabled(new_chat)
+            self._log.info("MCP in-app-agent toggle: %s → %s", chat_on, new_chat)
         _ = response  # rumps-style response — single-button dialog, ignored
 
     def open_workspace(self, _sender) -> None:

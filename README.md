@@ -256,15 +256,42 @@ specific file or pull neighbouring chunks via `rag_get_chunk_range`.
 Indexes live under `rag/.chroma{,_code}/` + `rag/.bm25{,_code}/` —
 gitignored, ~few MB combined, rebuilt in ~1 min.
 
-### MCP debugging
+### MCP endpoint
 
-The BE exposes a FastMCP server at `/mcp` for external MCP clients
-(Claude Desktop, `mcp-cli`, etc.). Gated three ways: tray-flag
-(`mcpDebugEnabled` off by default) + loopback-only peer + no browser
-`Origin` header. Tools: `mcp_sessions`, `mcp_page`, `mcp_eval`,
-`mcp_screenshot`. See [`backend/app/services/mcp_server.py`](backend/app/services/mcp_server.py).
+The BE exposes a FastMCP server at `/mcp` (streamable HTTP, on the
+app's own port) for external MCP clients such as Claude Code. It carries
+three tool families, each behind its own switch in the tray's Settings
+dialog (all off by default):
+
+- **Agent tools** (`vc_*`, switch "Expose agent tools to external
+  agents") — the tool registry the in-app agent uses, so an external
+  agent can do everything the in-app agent can, with no API key in the
+  app. `vc_sessions` → `vc_instructions` (the in-app agent's system
+  prompt for that page) → `vc_list_tools` / `vc_describe_tools` →
+  `vc_call_tool`. Page tools run in the chosen bookmarklet tab as its
+  user. Not offered: `ask_user_question` (the external agent asks its
+  own user). See [`backend/app/services/mcp_registry.py`](backend/app/services/mcp_registry.py).
+- **Debugging tools** (`mcp_*`, switch "Enable MCP debugging tools") —
+  inspect the app itself: `mcp_sessions`, `mcp_page`, `mcp_eval` (raw
+  JS in a tab), `mcp_screenshot`, devtools capture.
+  See [`backend/app/services/mcp_server.py`](backend/app/services/mcp_server.py).
+- **In-app agent** (`mcp_inject_text`, switch "Let external agents
+  message the in-app agent") — post a message into a tab's chat; the
+  in-app agent runs it as the user's own message, on the app's model
+  access.
+
+A family that is off is neither listed nor callable. Every tool's
+description starts with `[Agent tools]`, `[Debugging]` or `[In-app agent]`, and the server
+instructions tell clients which family to use for what. The endpoint is
+also loopback-only and refuses requests carrying a browser `Origin`.
 Under Docker the peer is the container bridge, not loopback, so `/mcp`
 refuses it; run from source to use it.
+
+Connect Claude Code (the URL is in the tray's Settings dialog):
+
+```bash
+claude mcp add --transport http voitta-compute https://127.0.0.1:12358/mcp/
+```
 
 ### Docs
 
