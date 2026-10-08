@@ -68,6 +68,8 @@ class Trace:
         return event
 
     def finish(self, type_: str, payload: dict[str, Any]) -> None:
+        if self.status["status"] != "running":
+            return  # exactly one terminal event per run
         self.emit(type_, payload)
         status = {"run.completed": "completed", "run.failed": "failed",
                   "run.cancelled": "cancelled"}[type_]
@@ -114,10 +116,21 @@ def fail_abandoned(runs_dir: Path) -> int:
             continue
         log = runs_dir / f"{status['run_id']}.jsonl"
         last_seq = 0
+        last: dict[str, Any] | None = None
         if log.is_file():
             lines = [ln for ln in log.read_text(encoding="utf-8").splitlines() if ln.strip()]
             if lines:
-                last_seq = json.loads(lines[-1])["sequence"]
+                last = json.loads(lines[-1])
+                last_seq = last["sequence"]
+        if last is not None and last["type"] in TERMINAL:
+            # Crashed after the terminal event but before the status update:
+            # repair the status from the log, never add a second terminal.
+            payload = last.get("payload") or {}
+            status.update(status=last["type"].split(".", 1)[1],
+                          final_output=payload.get("final_output"),
+                          error=payload.get("error"))
+            status_path.write_text(json.dumps(status), encoding="utf-8")
+            continue
         event = {
             "schema_version": SCHEMA_VERSION, "event_id": uuid.uuid4().hex,
             "sequence": last_seq + 1, "timestamp": _now(),

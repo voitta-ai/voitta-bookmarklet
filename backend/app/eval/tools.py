@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from app.eval.redact import Redactor
 from app.services.llm import ToolSchema
 
 ALLOWED_TARGETS = ("sandbox",)
@@ -78,9 +79,12 @@ def decide(name: str, args: dict[str, Any]) -> Decision:
 @dataclass
 class TestSink:
     path: Path
+    redactor: Redactor
     records: list[dict[str, Any]] = field(default_factory=list)
 
     def write(self, target: str, content: str, run_id: str, call_id: str) -> dict[str, Any]:
+        # The sink is on disk like the trace, so it gets the same redaction.
+        content, _ = self.redactor.scrub(content)
         receipt = {
             "receipt_id": uuid.uuid4().hex,
             "target": target,

@@ -134,7 +134,7 @@ def create_session(tenant: str, provider: str | None, model: str | None) -> Eval
         id=uuid.uuid4().hex, tenant=tenant, provider=provider, model=model,
         api_key=api_key, system=system, tools=tools, max_tokens=max_tokens,
         max_tool_iterations=max_iters, config=config, config_digest=_sha(config),
-        sink=TestSink(tenant_dir(tenant) / "sessions" / "pending" / "sink.jsonl"),
+        sink=TestSink(Path(), Redactor([api_key])),
     )
     session.sink.path = tenant_dir(tenant) / "sessions" / session.id / "sink.jsonl"
     _sessions[(tenant, session.id)] = session
@@ -253,39 +253,54 @@ async def start_turn(
 async def _execute(session: EvalSession, run: EvalRun, input_text: str,
                    parent_run_id: str | None, timeout_s: int) -> None:
     trace = run.trace
-    async with session.lock:  # turns within a session are serialized
-        trace.emit("run.started", {"input": input_text, "parent_run_id": parent_run_id,
-                                   "config": session.config, "timeout_s": timeout_s})
-        snapshot = len(session.messages)
-        session.messages.append(LlmMessage(role="user",
-                                           content=[{"type": "text", "text": input_text}]))
-        sink = _TraceSink(trace)
-        try:
-            await asyncio.wait_for(run_turn(messages=session.messages, run=RunContext(
-                provider_id=session.provider, api_key=session.api_key, model=session.model,
-                system=session.system, tool_ctx=ToolCtx(session_id=f"eval:{session.id}"),
-                max_tokens=session.max_tokens,
-                max_tool_iterations=session.max_tool_iterations,
-                sink=sink, tools=session.tools, dispatch=_dispatcher(session, trace),
-            )), timeout=timeout_s)
-        except asyncio.TimeoutError:
-            await sink.text_end()
-            del session.messages[snapshot:]
-            trace.finish("run.failed", {"error": {"kind": "timeout",
-                                                  "message": f"no result within {timeout_s}s"}})
-        except asyncio.CancelledError:
-            del session.messages[snapshot:]
-            trace.finish("run.cancelled", {"error": {"kind": "cancelled"}})
-            raise
-        except Exception as exc:
-            logger.exception("eval run %s failed", run.id)
-            await sink.text_end()
-            del session.messages[snapshot:]
-            trace.finish("run.failed", {"error": {"kind": type(exc).__name__,
-                                                  "message": str(exc)}})
-        else:
-            final = sink.outputs[-1] if sink.outputs else ""
-            trace.finish("run.completed", {"final_output": final})
+    try:
+        await session.lock.acquire()  # turns within a session are serialized
+    except asyncio.CancelledError:
+        # Cancelled while queued behind another turn: still terminal.
+        trace.finish("run.cancelled", {"error": {"kind": "cancelled",
+                                                 "message": "cancelled before it started"}})
+        raise
+    try:
+        await _execute_locked(session, run, input_text, parent_run_id, timeout_s)
+    finally:
+        session.lock.release()
+
+
+async def _execute_locked(session: EvalSession, run: EvalRun, input_text: str,
+                          parent_run_id: str | None, timeout_s: int) -> None:
+    trace = run.trace
+    trace.emit("run.started", {"input": input_text, "parent_run_id": parent_run_id,
+                               "config": session.config, "timeout_s": timeout_s})
+    snapshot = len(session.messages)
+    session.messages.append(LlmMessage(role="user",
+                                       content=[{"type": "text", "text": input_text}]))
+    sink = _TraceSink(trace)
+    try:
+        await asyncio.wait_for(run_turn(messages=session.messages, run=RunContext(
+            provider_id=session.provider, api_key=session.api_key, model=session.model,
+            system=session.system, tool_ctx=ToolCtx(session_id=f"eval:{session.id}"),
+            max_tokens=session.max_tokens,
+            max_tool_iterations=session.max_tool_iterations,
+            sink=sink, tools=session.tools, dispatch=_dispatcher(session, trace),
+        )), timeout=timeout_s)
+    except asyncio.TimeoutError:
+        await sink.text_end()
+        del session.messages[snapshot:]
+        trace.finish("run.failed", {"error": {"kind": "timeout",
+                                              "message": f"no result within {timeout_s}s"}})
+    except asyncio.CancelledError:
+        del session.messages[snapshot:]
+        trace.finish("run.cancelled", {"error": {"kind": "cancelled"}})
+        raise
+    except Exception as exc:
+        logger.exception("eval run %s failed", run.id)
+        await sink.text_end()
+        del session.messages[snapshot:]
+        trace.finish("run.failed", {"error": {"kind": type(exc).__name__,
+                                              "message": str(exc)}})
+    else:
+        final = sink.outputs[-1] if sink.outputs else ""
+        trace.finish("run.completed", {"final_output": final})
 
 
 def get_run(tenant: str, run_id: str) -> EvalRun | None:

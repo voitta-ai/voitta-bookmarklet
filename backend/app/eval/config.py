@@ -39,8 +39,11 @@ def tenant_for_token(token: str) -> str | None:
 
 
 def tenant_dir(tenant: str) -> Path:
-    safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in tenant)
-    path = USER_DATA_ROOT / "eval" / safe
+    # Readable prefix plus a hash of the exact tenant id, so two tenants whose
+    # names sanitize alike ("acme/a", "acme_a") never share a directory.
+    safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in tenant)[:40]
+    digest = hashlib.sha256(tenant.encode()).hexdigest()[:16]
+    path = USER_DATA_ROOT / "eval" / f"{safe}-{digest}"
     (path / "runs").mkdir(parents=True, exist_ok=True)
     return path
 

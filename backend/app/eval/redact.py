@@ -27,7 +27,9 @@ class Redactor:
             out = {}
             for k, v in obj.items():
                 sub = f"{path}.{k}"
-                if isinstance(v, str) and _SECRET_KEY.search(str(k)):
+                # Whole subtree under a secret-looking key; numbers and
+                # booleans are not secrets (usage has input_tokens etc.).
+                if _SECRET_KEY.search(str(k)) and v is not None and not isinstance(v, (bool, int, float)):
                     out[k] = REDACTED
                     hits.append(sub)
                 else:
