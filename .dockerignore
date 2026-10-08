@@ -1,0 +1,15 @@
+.git
+**/node_modules
+**/.venv
+**/__pycache__
+frontend/dist
+backend/certs
+backend/tests
+lib-sources
+rag
+build
+dist
+wheels
+icons
+src
+.env
