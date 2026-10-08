@@ -27,7 +27,7 @@ import base64
 import json
 import logging
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any, Awaitable, Callable, Protocol
 
 import chainlit as cl
 
@@ -46,7 +46,7 @@ from app.services.llm.stream import (
     MessageStop,
     StreamError,
 )
-from app.tools.registry import ToolCtx, registry
+from app.tools.registry import ToolCtx, ToolResult, registry
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +100,14 @@ class TurnSink(Protocol):
 
     async def notice(self, text: str) -> None:
         """A message from the loop (truncation, iteration cap)."""
+        ...
+
+    async def model_request(self, model: str, message_count: int) -> None:
+        """A provider call is about to be made."""
+        ...
+
+    async def model_stop(self, stop_reason: str, usage: Any) -> None:
+        """The provider call finished with this stop reason and usage."""
         ...
 
 
@@ -161,6 +169,16 @@ class ChainlitSink:
     async def notice(self, text: str) -> None:
         await cl.Message(content=text).send()
 
+    async def model_request(self, model: str, message_count: int) -> None:
+        pass
+
+    async def model_stop(self, stop_reason: str, usage: Any) -> None:
+        pass
+
+
+# (name, args, ctx, tool_use_id) -> result. The default is registry.dispatch.
+Dispatch = Callable[[str, dict[str, Any], ToolCtx, str], Awaitable[ToolResult]]
+
 
 @dataclass(frozen=True)
 class RunContext:
@@ -178,6 +196,11 @@ class RunContext:
     max_tokens: int
     max_tool_iterations: int
     sink: TurnSink
+    # Overrides for non-UI transports (the eval API): the tool list shown to
+    # the model, and the function that executes a tool call. None means the
+    # registry's host-visible tools and registry.dispatch.
+    tools: tuple[ToolSchema, ...] | None = None
+    dispatch: Dispatch | None = None
 
 
 async def run_turn(*, messages: list[LlmMessage], run: RunContext) -> None:
@@ -200,7 +223,7 @@ async def run_turn(*, messages: list[LlmMessage], run: RunContext) -> None:
         "run_turn: host=%r visible=%d/%d hidden=%s",
         ctx.host, len(visible_names), len(all_names), hidden_names,
     )
-    tools = [
+    tools = list(run.tools) if run.tools is not None else [
         ToolSchema(name=s.name, description=s.description, input_schema=s.input_schema)
         for s in visible
     ]
@@ -215,6 +238,7 @@ async def run_turn(*, messages: list[LlmMessage], run: RunContext) -> None:
         steps_by_index: dict[int, Any] = {}
         iter_stop_reason = "end_turn"
 
+        await sink.model_request(use_model, len(messages))
         async with provider.stream(
             NormalisedRequest(
                 model=use_model,
@@ -263,6 +287,7 @@ async def run_turn(*, messages: list[LlmMessage], run: RunContext) -> None:
                             block["input"] = {"_raw": joined}
                 elif isinstance(ev, MessageStop):
                     iter_stop_reason = ev.stop_reason
+                    await sink.model_stop(ev.stop_reason, ev.usage)
                 elif isinstance(ev, StreamError):
                     await sink.text_end()
                     raise RuntimeError(f"{ev.type}: {ev.message}")
@@ -300,12 +325,18 @@ async def run_turn(*, messages: list[LlmMessage], run: RunContext) -> None:
             for idx in sorted(blocks_by_index)
             if blocks_by_index[idx]["type"] == "tool_use"
         ]
-        results = await asyncio.gather(
-            *[
+        if run.dispatch is not None:
+            dispatch = run.dispatch
+            calls = [
+                dispatch(tu["name"], dict(tu.get("input") or {}), ctx, tu["id"])
+                for _, tu in tool_uses
+            ]
+        else:
+            calls = [
                 registry.dispatch(tu["name"], dict(tu.get("input") or {}), ctx)
                 for _, tu in tool_uses
             ]
-        )
+        results = await asyncio.gather(*calls)
 
         tool_result_blocks: list[dict[str, Any]] = []
         for (block_idx, tu), res in zip(tool_uses, results):

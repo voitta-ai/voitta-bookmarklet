@@ -110,7 +110,8 @@ from app.services import login_auth as _login_auth
 
 
 def _is_guarded_path(path: str) -> bool:
-    if path == "/health" or path.startswith("/api/auth/"):
+    # /api/eval/ carries its own bearer-token auth (app.eval.api).
+    if path == "/health" or path.startswith("/api/auth/") or path.startswith("/api/eval/"):
         return False
     return (
         path.startswith("/api/")
@@ -265,6 +266,17 @@ app.include_router(plugins_router)
 app.include_router(google_router)
 app.include_router(workspace_router)
 app.include_router(agent_sdk_router)
+
+# Eval API (voitta-compute#19): mounted only when VOITTA_EVAL_TOKENS is set.
+from app.eval import config as _eval_config  # noqa: E402
+
+if _eval_config.enabled():
+    from app.eval.api import router as eval_router  # noqa: E402
+    from app.eval.trace import fail_abandoned as _eval_fail_abandoned  # noqa: E402
+
+    for _d in _eval_config.all_tenant_dirs():
+        _eval_fail_abandoned(_d / "runs")
+    app.include_router(eval_router)
 # Hardened-site bridge (/bridge, /bridge/relay.js, /bridge/boot.js). Must be
 # registered before the catch-all frontend route so it isn't shadowed.
 app.include_router(bridge_router)
