@@ -14,7 +14,8 @@ from typing import Any
 import chainlit as cl
 from chainlit.types import ThreadDict
 
-from app.agent import run_turn
+from app.agent import ChainlitSink, RunContext, run_turn
+from app.config import DEFAULT_MAX_TOKENS, DEFAULT_MAX_TOOL_ITERATIONS
 from app.plugins import for_host, load_all
 from app.services.llm import resolve_api_key
 from app.services.llm.base import Message as LlmMessage
@@ -475,11 +476,18 @@ async def _run_message_turn(user_msg: cl.Message, email: str | None) -> None:
     try:
         await run_turn(
             messages=messages,
-            system=system,
-            provider_id=provider,
-            api_key=api_key,
-            model=models.get(provider),
-            ctx=ctx,
+            run=RunContext(
+                provider_id=provider,
+                api_key=api_key,
+                model=models.get(provider),
+                system=system,
+                tool_ctx=ctx,
+                max_tokens=fresh.get("max_tokens", DEFAULT_MAX_TOKENS),
+                max_tool_iterations=fresh.get(
+                    "max_tool_iterations", DEFAULT_MAX_TOOL_ITERATIONS,
+                ),
+                sink=ChainlitSink(),
+            ),
         )
         cl.user_session.set("messages", messages)
     except Exception as exc:  # surface to the user instead of crashing the socket

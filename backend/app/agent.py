@@ -1,16 +1,23 @@
-"""Tool-use agent loop, Chainlit-flavoured.
+"""Tool-use agent loop for the API providers.
 
 Direct port of the old ``routes/chat.py:_stream()`` agent loop, with
 two differences:
 
-* No SSE framing. Streaming text goes through ``cl.Message.stream_token``;
-  every tool call gets its own ``cl.Step(type="tool")``; the per-iteration
-  ``turn_persist`` mechanism is gone — history lives in
-  ``cl.user_session["messages"]`` and the caller mutates it in place.
+* No SSE framing, and no UI primitives in the loop. Everything the loop
+  shows (streamed text, one step per tool call, notices, full-size
+  screenshots) goes through a :class:`TurnSink`. :class:`ChainlitSink`
+  renders it as ``cl.Message``/``cl.Step`` exactly as before; other
+  transports (an eval API, voitta-compute#14) supply their own sink.
+  History is the ``messages`` list, which the caller owns and the loop
+  mutates in place.
 * The "browser-side" tools we used to dispatch via the bridge bus now
   go through ``cl.CopilotFunction.acall()`` (see
   :mod:`app.tools.registry`), which round-trips through the React
   client's ``call_fn`` socket event.
+
+Everything a turn depends on arrives in a :class:`RunContext`, including
+a snapshot of the settings it uses, so a settings change mid-turn cannot
+alter a running turn.
 """
 
 from __future__ import annotations
@@ -19,12 +26,11 @@ import asyncio
 import base64
 import json
 import logging
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Protocol
 
 import chainlit as cl
 
-from app.config import DEFAULT_MAX_TOKENS, DEFAULT_MAX_TOOL_ITERATIONS
-from app.settings import load as load_user_settings
 from app.services.llm import (
     NormalisedRequest,
     ProviderId,
@@ -58,23 +64,134 @@ def _tool_result_text(result: Any) -> str:
     return text[:MAX_TOOL_RESULT_BYTES] + f"\n…[truncated: {len(text)} bytes]"
 
 
-async def run_turn(
-    *,
-    messages: list[LlmMessage],
-    system: str,
-    provider_id: ProviderId,
-    api_key: str,
-    model: str | None,
-    ctx: ToolCtx,
-) -> None:
+@dataclass(frozen=True)
+class Attachment:
+    """An image shown to the human alongside a tool result."""
+
+    name: str
+    content: bytes
+    mime: str
+
+
+class TurnSink(Protocol):
+    """Where a turn's observable output goes.
+
+    Text arrives as deltas; :meth:`text_end` closes the current text
+    bubble (the next delta starts a new one). Each tool call is opened
+    with :meth:`tool_start`, which returns an opaque handle passed back to
+    :meth:`tool_input_delta` and :meth:`tool_end`.
+    """
+
+    async def text_delta(self, text: str) -> None: ...
+
+    async def text_end(self) -> None: ...
+
+    async def tool_start(self, name: str) -> Any: ...
+
+    async def tool_input_delta(self, handle: Any, text: str) -> None: ...
+
+    async def tool_end(
+        self, handle: Any, output: str, is_error: bool, attachments: list[Attachment],
+    ) -> None: ...
+
+    async def image(self, label: str, attachment: Attachment) -> None:
+        """A full-size image posted to the conversation itself."""
+        ...
+
+    async def notice(self, text: str) -> None:
+        """A message from the loop (truncation, iteration cap)."""
+        ...
+
+
+class ChainlitSink:
+    """Renders a turn as Chainlit messages and steps (the chat UI)."""
+
+    def __init__(self) -> None:
+        self._msg: cl.Message | None = None
+
+    async def text_delta(self, text: str) -> None:
+        if not text:
+            return
+        msg = self._msg
+        if msg is None:
+            msg = self._msg = cl.Message(content="")
+            await msg.send()
+        await msg.stream_token(text)
+
+    async def text_end(self) -> None:
+        if self._msg is not None:
+            await self._msg.update()
+            self._msg = None
+
+    async def tool_start(self, name: str) -> cl.Step:
+        step = cl.Step(name=name, type="tool")
+        step.input = ""
+        await step.send()
+        return step
+
+    async def tool_input_delta(self, handle: cl.Step, text: str) -> None:
+        if text:
+            handle.input = (handle.input or "") + text
+            await handle.update()
+
+    async def tool_end(
+        self, handle: cl.Step, output: str, is_error: bool, attachments: list[Attachment],
+    ) -> None:
+        handle.output = output
+        if is_error:
+            handle.is_error = True
+        if attachments:
+            handle.elements = [
+                cl.Image(name=a.name, content=a.content, mime=a.mime, display="inline")
+                for a in attachments
+            ]
+        await handle.update()
+
+    async def image(self, label: str, attachment: Attachment) -> None:
+        await cl.Message(
+            content=f"📸 `{label}`",
+            elements=[cl.Image(
+                name=attachment.name,
+                content=attachment.content,
+                mime=attachment.mime,
+                display="inline",
+            )],
+        ).send()
+
+    async def notice(self, text: str) -> None:
+        await cl.Message(content=text).send()
+
+
+@dataclass(frozen=True)
+class RunContext:
+    """Everything one turn depends on, resolved by the caller up front.
+
+    ``max_tokens`` and ``max_tool_iterations`` are a snapshot of the
+    user's settings taken before the turn starts.
+    """
+
+    provider_id: ProviderId
+    api_key: str
+    model: str | None
+    system: str
+    tool_ctx: ToolCtx
+    max_tokens: int
+    max_tool_iterations: int
+    sink: TurnSink
+
+
+async def run_turn(*, messages: list[LlmMessage], run: RunContext) -> None:
     """Drive the agent loop until ``stop_reason != "tool_use"``.
 
     Mutates ``messages`` in place — appends one assistant message per
     iteration, plus a synthetic tool_result user message between
-    iterations. Emits Chainlit primitives along the way.
+    iterations. Emits its output through ``run.sink``.
     """
-    provider = get_provider(provider_id, api_key)
-    use_model = model or default_model_for(provider_id)
+    provider_id = run.provider_id
+    ctx = run.tool_ctx
+    sink = run.sink
+    provider = get_provider(provider_id, run.api_key)
+    use_model = run.model or default_model_for(provider_id)
     visible = registry.visible_for_host(ctx.host)
     all_names = [s.name for s in registry.all()]
     visible_names = [s.name for s in visible]
@@ -87,26 +204,21 @@ async def run_turn(
         ToolSchema(name=s.name, description=s.description, input_schema=s.input_schema)
         for s in visible
     ]
-    # Read the cap from settings at the top of the turn so changes in
-    # the Global tab take effect on the next user message without a
-    # backend restart.
-    _user_settings = load_user_settings()
-    max_iters = _user_settings.get("max_tool_iterations", DEFAULT_MAX_TOOL_ITERATIONS)
-    max_tokens = _user_settings.get("max_tokens", DEFAULT_MAX_TOKENS)
+    max_iters = run.max_tool_iterations
+    max_tokens = run.max_tokens
 
     for iteration in range(max_iters):
-        streaming_msg: cl.Message | None = None
         # Per-iteration accumulated blocks, indexed by provider block_index.
         blocks_by_index: dict[int, dict[str, Any]] = {}
         text_buf: dict[int, list[str]] = {}
         args_buf: dict[int, list[str]] = {}
-        steps_by_index: dict[int, cl.Step] = {}
+        steps_by_index: dict[int, Any] = {}
         iter_stop_reason = "end_turn"
 
         async with provider.stream(
             NormalisedRequest(
                 model=use_model,
-                system=system,
+                system=run.system,
                 max_tokens=max_tokens,
                 messages=messages,
                 tools=tools,
@@ -125,24 +237,18 @@ async def run_turn(
                             "input": {},
                         }
                         args_buf[ev.block_index] = []
-                        step = cl.Step(name=ev.tool_name or "tool", type="tool")
-                        step.input = ""
-                        await step.send()
-                        steps_by_index[ev.block_index] = step
+                        steps_by_index[ev.block_index] = await sink.tool_start(
+                            ev.tool_name or "tool",
+                        )
                 elif isinstance(ev, BlockDelta):
                     if ev.kind == "text":
                         text_buf.setdefault(ev.block_index, []).append(ev.text)
-                        if ev.text:
-                            if streaming_msg is None:
-                                streaming_msg = cl.Message(content="")
-                                await streaming_msg.send()
-                            await streaming_msg.stream_token(ev.text)
+                        await sink.text_delta(ev.text)
                     else:
                         args_buf.setdefault(ev.block_index, []).append(ev.text)
                         step = steps_by_index.get(ev.block_index)
-                        if step is not None and ev.text:
-                            step.input = (step.input or "") + ev.text
-                            await step.update()
+                        if step is not None:
+                            await sink.tool_input_delta(step, ev.text)
                 elif isinstance(ev, BlockStop):
                     block = blocks_by_index.get(ev.block_index)
                     if block is None:
@@ -158,12 +264,10 @@ async def run_turn(
                 elif isinstance(ev, MessageStop):
                     iter_stop_reason = ev.stop_reason
                 elif isinstance(ev, StreamError):
-                    if streaming_msg is not None:
-                        await streaming_msg.update()
+                    await sink.text_end()
                     raise RuntimeError(f"{ev.type}: {ev.message}")
 
-        if streaming_msg is not None:
-            await streaming_msg.update()
+        await sink.text_end()
 
         # Assemble the assistant turn in block_index order.
         assistant_content = [
@@ -182,13 +286,11 @@ async def run_turn(
                 # response stopped — otherwise the partial bubble looks
                 # like a hang. The number echoed is the effective cap
                 # for this turn, set by the Global settings tab.
-                await cl.Message(
-                    content=(
-                        f"⚠️ Response truncated at the **max_tokens={max_tokens}** "
-                        "cap. Raise it in ⚙ Settings → Global → "
-                        "*Max response tokens per turn*, or ask me to continue."
-                    )
-                ).send()
+                await sink.notice(
+                    f"⚠️ Response truncated at the **max_tokens={max_tokens}** "
+                    "cap. Raise it in ⚙ Settings → Global → "
+                    "*Max response tokens per turn*, or ask me to continue."
+                )
             return
 
         # tool_use path: dispatch in parallel, attach results to steps,
@@ -362,15 +464,11 @@ async def run_turn(
                             # stream, not the collapsed tool step.
                             try:
                                 ext = "png" if mime_full == "image/png" else "webp"
-                                await cl.Message(
-                                    content=f"📸 `{label}`",
-                                    elements=[cl.Image(
-                                        name=f"{label}.{ext}",
-                                        content=full_bytes,
-                                        mime=mime_full,
-                                        display="inline",
-                                    )],
-                                ).send()
+                                await sink.image(label, Attachment(
+                                    name=f"{label}.{ext}",
+                                    content=full_bytes,
+                                    mime=mime_full,
+                                ))
                             except Exception:
                                 logger.exception(
                                     "failed to post full-size chat msg for %s", label,
@@ -432,15 +530,11 @@ async def run_turn(
             image_block = image_blocks[0] if image_blocks else None
 
             if step is not None:
-                step.output = _tool_result_text(content_payload)
-                if not res.ok:
-                    step.is_error = True
                 # Attach every captured image (both LLM-visible and
-                # chat-only) as an inline element on the tool step so
-                # the human sees every candidate. Labels carry the
-                # technique/strategy so filenames are self-explanatory
-                # in the Chainlit chips.
-                elements = []
+                # chat-only) to the tool step so the human sees every
+                # candidate. Labels carry the technique/strategy so
+                # filenames are self-explanatory in the Chainlit chips.
+                attachments: list[Attachment] = []
                 base = tu.get("name") or "screenshot"
                 for idx, (blk, label) in enumerate(zip(image_blocks, image_labels)):
                     # Stash-path images already posted as standalone
@@ -448,37 +542,29 @@ async def run_turn(
                     if idx < len(image_already_in_chat) and image_already_in_chat[idx]:
                         continue
                     try:
-                        raw = base64.b64decode(blk["source"]["data"])
-                        elements.append(
-                            cl.Image(
-                                name=f"{base}__{label}.png",
-                                content=raw,
-                                mime=blk["source"]["media_type"],
-                                display="inline",
-                            )
-                        )
+                        attachments.append(Attachment(
+                            name=f"{base}__{label}.png",
+                            content=base64.b64decode(blk["source"]["data"]),
+                            mime=blk["source"]["media_type"],
+                        ))
                     except Exception:
                         logger.exception(
                             "failed to attach screenshot element (%s)", label,
                         )
                 for img, label in zip(chat_only_images, chat_only_labels):
                     try:
-                        raw = base64.b64decode(img["data"])
-                        elements.append(
-                            cl.Image(
-                                name=f"{base}__{label}.png",
-                                content=raw,
-                                mime=img["media_type"],
-                                display="inline",
-                            )
-                        )
+                        attachments.append(Attachment(
+                            name=f"{base}__{label}.png",
+                            content=base64.b64decode(img["data"]),
+                            mime=img["media_type"],
+                        ))
                     except Exception:
                         logger.exception(
                             "failed to attach chat-only screenshot (%s)", label,
                         )
-                if elements:
-                    step.elements = elements
-                await step.update()
+                await sink.tool_end(
+                    step, _tool_result_text(content_payload), not res.ok, attachments,
+                )
 
             # Requesty silently drops tool_result images for non-Claude
             # models, so those get the textual note below instead.
@@ -529,4 +615,4 @@ async def run_turn(
         messages.append(LlmMessage(role="user", content=tool_result_blocks))
 
     # If we hit the iteration cap, surface it instead of silently dropping.
-    await cl.Message(content=f"⚠️ tool-use loop exceeded {max_iters} iterations").send()
+    await sink.notice(f"⚠️ tool-use loop exceeded {max_iters} iterations")
