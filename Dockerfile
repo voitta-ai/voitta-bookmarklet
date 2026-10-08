@@ -1,9 +1,9 @@
-# Voitta Compute in a container: the same backend start.sh runs, with the
+# Voitta Bookmarklet in a container: the same backend start.sh runs, with the
 # frontend bundle and the docs RAG index built into the image.
 #
-#   docker run -d --name voitta-compute \
+#   docker run -d --name voitta-bookmarklet \
 #     -p 127.0.0.1:12358:12358 -p 127.0.0.1:12359:12359 \
-#     -v voitta-compute-data:/data ghcr.io/voitta-ai/voitta-compute
+#     -v voitta-bookmarklet-data:/data ghcr.io/voitta-ai/voitta-bookmarklet
 #
 # Publish the ports on 127.0.0.1 only: single-user mode has no login.
 # Optional TLS: mount a mkcert pair at /app/backend/certs (see README).
@@ -40,12 +40,12 @@ COPY --from=frontend /src/frontend/dist frontend/dist
 
 # All mutable state lives under /data (one volume): conversations,
 # projects, scripts, the agent engine's sessions, and settings.json, which
-# the app reads from ~/.config/voitta-compute.
+# the app reads from ~/.config/voitta-bookmarklet.
 ENV VOITTA_DATA_ROOT=/data \
     VOITTA_HOST=0.0.0.0 \
     HOME=/home/voitta
 RUN mkdir -p /data/config /home/voitta/.config \
- && ln -s /data/config /home/voitta/.config/voitta-compute \
+ && ln -s /data/config /home/voitta/.config/voitta-bookmarklet \
  && chown -R voitta:voitta /app /data /home/voitta
 
 USER voitta

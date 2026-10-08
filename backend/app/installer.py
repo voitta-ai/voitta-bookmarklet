@@ -42,6 +42,8 @@ _CORE_HEAVY_PACKAGES: list[tuple[str, str]] = [
     # Claude Code engine). The engine binary itself is a separate install the
     # brain probes for at runtime; this is just the Python driver.
     ("claude_agent_sdk", "claude-agent-sdk>=0.2.82"),
+    # Argument validation for the agent tools on /mcp (mcp_registry).
+    ("jsonschema", "jsonschema>=4"),
     # Upper bound matches numba's numpy ceiling. numba (pulled in by the voice
     # assistant's mlx_whisper) requires numpy<2.5; without this cap the main
     # install resolves numpy 2.5, the live process imports it, and a later voice
@@ -84,8 +86,8 @@ def _plugin_dependencies() -> list[tuple[str, str]]:
         if d.is_dir():
             candidate_dirs.append(d)
     try:
-        import voitta_compute
-        bundled = Path(voitta_compute.__file__).resolve().parent / "resources" / "plugins"
+        import voitta_bookmarklet
+        bundled = Path(voitta_bookmarklet.__file__).resolve().parent / "resources" / "plugins"
         if bundled.is_dir() and bundled not in candidate_dirs:
             candidate_dirs.append(bundled)
     except Exception:
@@ -147,7 +149,7 @@ def _user_site() -> Path:
         return Path(prefix) / "lib" / py_dir / "site-packages"
     return (
         Path.home()
-        / "Library" / "Application Support" / "Voitta Compute"
+        / "Library" / "Application Support" / "Voitta Bookmarklet"
         / "userbase" / "lib" / py_dir / "site-packages"
     )
 
@@ -169,7 +171,7 @@ def _deploy_stamp_path() -> Path:
 def current_app_version() -> str:
     # Preferred: version stamped into the package at build time by build_app.sh.
     try:
-        from voitta_compute import __version__ as _v
+        from voitta_bookmarklet import __version__ as _v
         if isinstance(_v, str) and _v and _v != "unknown":
             return _v
     except Exception:
@@ -177,7 +179,7 @@ def current_app_version() -> str:
     try:
         from importlib.metadata import version, PackageNotFoundError
         try:
-            return version("voitta-compute")
+            return version("voitta-bookmarklet")
         except PackageNotFoundError:
             pass
     except Exception:
@@ -250,9 +252,9 @@ def lib_sources_need_update() -> bool:
     if not dest.is_dir() or not stamp.is_file():
         return True
     try:
-        import voitta_compute
+        import voitta_bookmarklet
         bundled_stamp = (
-            Path(voitta_compute.__file__).resolve().parent
+            Path(voitta_bookmarklet.__file__).resolve().parent
             / "resources" / "code_sources_version.txt"
         )
         if not bundled_stamp.is_file():
@@ -276,8 +278,8 @@ def clone_lib_sources(progress_cb: "Callable[[str], None]") -> bool:
     import subprocess as _sp
 
     try:
-        import voitta_compute
-        res = Path(voitta_compute.__file__).resolve().parent / "resources"
+        import voitta_bookmarklet
+        res = Path(voitta_bookmarklet.__file__).resolve().parent / "resources"
     except Exception as exc:
         last_failure_detail = f"Cannot locate bundle resources: {exc}"
         return False
@@ -683,8 +685,8 @@ def install_all(progress_cb: ProgressCb) -> bool:
 
         args = ["install", "--no-warn-script-location"]
         try:
-            import voitta_compute
-            _whl = Path(voitta_compute.__file__).resolve().parent / "resources" / "wheels"
+            import voitta_bookmarklet
+            _whl = Path(voitta_bookmarklet.__file__).resolve().parent / "resources" / "wheels"
         except Exception:
             _whl = Path(__file__).resolve().parent.parent.parent / "wheels"
         if _whl.is_dir():
@@ -770,8 +772,8 @@ def pip_install_runtime(specs: list[str]) -> dict[str, Any]:
 
     args = ["install", "--no-warn-script-location"]
     try:
-        import voitta_compute
-        _whl = Path(voitta_compute.__file__).resolve().parent / "resources" / "wheels"
+        import voitta_bookmarklet
+        _whl = Path(voitta_bookmarklet.__file__).resolve().parent / "resources" / "wheels"
     except Exception:  # noqa: BLE001
         _whl = Path(__file__).resolve().parent.parent.parent / "wheels"
     if _whl.is_dir():

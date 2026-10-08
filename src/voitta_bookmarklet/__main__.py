@@ -1,8 +1,10 @@
-"""Briefcase entry point for the Voitta Compute .app bundle.
+"""Briefcase entry point for the Voitta Bookmarklet .app bundle.
 
-Responsibilities (all before importing any app.* module):
+Responsibilities (all before importing any app.* module other than the
+stdlib-only app.brand_migration):
   1. Bail out if we're a multiprocessing spawn child.
-  2. Prepare the writable user data dir under ~/Library/Application Support/.
+  2. Adopt the Voitta Compute-era data dirs, then prepare the writable user
+     data dir under ~/Library/Application Support/.
   3. Set VOITTA_PROJECT_ROOT so app.config resolves paths to the user data dir.
   4. Configure PIP_PREFIX so lazy installs land in userbase/, not the bundle.
   5. Redirect stdout/stderr to logs/voitta.log (visible in Console.app).
@@ -16,8 +18,17 @@ import json
 import multiprocessing
 import os
 import shutil
+import signal
 import sys
 from pathlib import Path
+
+# The Briefcase stub starts Python with an isolated config, which skips
+# Python's own signal setup — including ignoring SIGPIPE. Without this, a
+# write to a socket the peer already closed (an MCP client dropping a
+# connection mid-response, a browser closing a tab) kills the whole app
+# instantly: exit 141, no traceback, no crash report. Ignored, the write
+# raises BrokenPipeError instead, which the servers handle.
+signal.signal(signal.SIGPIPE, signal.SIG_IGN)
 
 # freeze_support() must be at module level in a frozen executable so that
 # multiprocessing spawn children (which re-run this module) exit immediately
@@ -44,7 +55,7 @@ def _is_mp_child() -> bool:
 # Path helpers
 # ---------------------------------------------------------------------------
 
-_APP_SUPPORT_NAME = "Voitta Compute"
+_APP_SUPPORT_NAME = "Voitta Bookmarklet"
 
 
 def _user_data_dir() -> Path:
@@ -54,8 +65,8 @@ def _user_data_dir() -> Path:
 def _bundle_resources_dir() -> Path:
     """Resources subtree shipped inside the .app bundle."""
     try:
-        import voitta_compute
-        return Path(voitta_compute.__file__).resolve().parent / "resources"
+        import voitta_bookmarklet
+        return Path(voitta_bookmarklet.__file__).resolve().parent / "resources"
     except Exception:
         pass
     rp = os.environ.get("RESOURCEPATH")
@@ -99,19 +110,13 @@ def _seed_lib_sources(src: Path, dst: Path, stamp_src: Path) -> None:
 
 
 def _migrate_settings() -> None:
-    """One-time migration: copy settings from old Voitta Chainlit config dir."""
-    old_config = Path.home() / ".config" / "voitta-bookmarklet-chainlit" / "settings.json"
-    new_config = Path.home() / ".config" / "voitta-compute" / "settings.json"
-    if old_config.is_file() and not new_config.is_file():
-        new_config.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(old_config, new_config)
-
+    new_config = Path.home() / ".config" / "voitta-bookmarklet" / "settings.json"
     _backfill_legacy_bookmarklet_keys(new_config)
 
 
 # Settings that only ever existed in the original bookmarklet app's blob.
 # The chainlit-era schema rewrite dropped them, so the chainlit→compute
-# copy above can't carry them; pull them straight from the original file.
+# dir adoption can't carry them; pull them straight from the original file.
 _LEGACY_BOOKMARKLET_KEYS = ("googleOAuth", "driveDownloadViaPickup", "pickupDownloadsDir")
 
 
@@ -121,11 +126,15 @@ def _backfill_legacy_bookmarklet_keys(new_config: Path) -> None:
     Google OAuth credentials/tokens (and the Drive pickup settings) were
     configured in the original voitta-bookmarklet app but never made it
     into the chainlit-era blob, so users who migrated through chainlit
-    land in voitta-compute with OAuth silently unconfigured. Runs on
+    and compute land here with OAuth silently unconfigured. The original
+    app's config now lives at voitta-bookmarklet.legacy (moved aside by
+    app.brand_migration, since the current name reuses its dir). Runs on
     every launch but only writes when a key is missing here and present
     in the legacy file — existing values are never overwritten.
     """
-    legacy = Path.home() / ".config" / "voitta-bookmarklet" / "settings.json"
+    from app.brand_migration import legacy_config_dir
+
+    legacy = legacy_config_dir() / "settings.json"
     if not legacy.is_file() or not new_config.is_file():
         return
     try:
@@ -148,11 +157,6 @@ def _backfill_legacy_bookmarklet_keys(new_config: Path) -> None:
     except Exception:
         # Never block app launch on a best-effort backfill.
         pass
-
-    old_app_support = Path.home() / "Library" / "Application Support" / "Voitta Chainlit"
-    new_app_support = Path.home() / "Library" / "Application Support" / "Voitta Compute"
-    if old_app_support.is_dir() and not new_app_support.exists():
-        shutil.copytree(old_app_support, new_app_support, dirs_exist_ok=False)
 
 
 def _prepare_user_data_dir() -> Path:
@@ -214,6 +218,19 @@ def _acquire_instance_lock() -> bool:
 def main() -> int:
     if _is_mp_child():
         return 0
+
+    # Before the instance lock: the lock file lives inside the data dir this
+    # may rename into place.
+    try:
+        from app.brand_migration import migrate
+        if not migrate():
+            # Voitta Compute (the pre-rename app) still runs — it owns the
+            # data dir and the ports. Exit like a second instance would.
+            return 0
+    except Exception:
+        # Never block launch; a half-done adoption is retried next launch.
+        import traceback
+        traceback.print_exc()
 
     if not _acquire_instance_lock():
         # Another instance is already running — silently exit.

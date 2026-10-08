@@ -16,7 +16,7 @@ from chainlit.types import ThreadDict
 
 from app.agent import ChainlitSink, RunContext, run_turn
 from app.config import DEFAULT_MAX_TOKENS, DEFAULT_MAX_TOOL_ITERATIONS
-from app.plugins import for_host, load_all
+from app.plugins import load_all
 from app.services.llm import resolve_api_key
 from app.services.llm.base import Message as LlmMessage
 from app.settings import load as load_user_settings
@@ -44,6 +44,12 @@ async def _patched_resume_thread(session):
     thread = await data_layer.get_thread(thread_id=session.thread_id_to_resume)
     if not thread:
         logger.warning("resume_thread: thread %s not found", session.thread_id_to_resume)
+        return
+    # With sign-in on, a session may only resume its own user's threads —
+    # a thread id from elsewhere must not load another user's conversation.
+    from app.services.login_auth import is_enabled
+    if is_enabled() and (not session.user or thread.get("userIdentifier") != session.user.identifier):
+        logger.warning("resume_thread: ownership check failed")
         return
     logger.info("resume_thread: resuming thread %s userIdentifier=%s", thread.get("id"), thread.get("userIdentifier"))
     metadata = thread.get("metadata") or {}
@@ -198,22 +204,11 @@ load_all()
 
 
 def _compose_system_prompt(host: str | None) -> str:
-    """System prompt = applicable plugins' prompts + the active project
-    block (which project is live, its PROJECT.md notes, and the
-    project_remember affordance). Shared by both brain paths."""
-    parts: list[str] = []
-    for plugin in for_host(host):
-        if plugin.system_prompt:
-            parts.append(plugin.system_prompt.rstrip())
-    try:
-        from app.services.projects import system_prompt_block
+    """System prompt for ``host`` — see :mod:`app.services.system_prompt`
+    (shared with the external-agent tool surface on /mcp)."""
+    from app.services.system_prompt import compose
 
-        block = system_prompt_block()
-        if block:
-            parts.append(block)
-    except Exception:
-        logger.exception("project system-prompt block failed")
-    return "\n\n".join(parts)
+    return compose(host)
 
 
 def _apply_current_user() -> str | None:

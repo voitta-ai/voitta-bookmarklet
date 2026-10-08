@@ -27,7 +27,7 @@ panel: tools are hidden from the LLM until OAuth is connected.
 5. Create an **OAuth 2.0 Client ID** (Credentials → Create Credentials):
    - Type: **Web application**.
    - Authorized redirect URI: `https://127.0.0.1:12358/api/google/oauth/callback` (exact match required).
-6. Copy **Client ID** + **Client Secret** into [`~/.config/voitta-compute/settings.json`](../backend/app/services/user_settings.py) under:
+6. Copy **Client ID** + **Client Secret** into [`~/.config/voitta-bookmarklet/settings.json`](../backend/app/services/user_settings.py) under:
    ```json
    "googleOAuth": {
      "clientId": "...apps.googleusercontent.com",
@@ -87,7 +87,7 @@ In-flight dedup also coalesces concurrent calls for the same `file_id` — secon
 
 ## Settings storage
 
-OAuth state lives in `~/.config/voitta-compute/settings.json` under `googleOAuth`:
+OAuth state lives in `~/.config/voitta-bookmarklet/settings.json` under `googleOAuth`:
 
 ```json
 {

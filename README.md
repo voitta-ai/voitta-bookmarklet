@@ -1,4 +1,4 @@
-# Voitta Compute
+# Voitta Bookmarklet
 
 An AI assistant you open on any web page with a bookmarklet. It reads the
 page you are on, runs Python for analysis and reports, and keeps your
@@ -33,10 +33,10 @@ You need Docker (Docker Desktop, Rancher Desktop, or Docker Engine on Linux).
 Nothing else is installed on your machine.
 
 ```bash
-docker run -d --name voitta-compute --restart unless-stopped \
+docker run -d --name voitta-bookmarklet --restart unless-stopped \
   -p 127.0.0.1:12358:12358 -p 127.0.0.1:12359:12359 \
-  -v voitta-compute-data:/data \
-  ghcr.io/voitta-ai/voitta-compute:latest
+  -v voitta-bookmarklet-data:/data \
+  ghcr.io/voitta-ai/voitta-bookmarklet:latest
 ```
 
 Then open <http://127.0.0.1:12358/bookmarklets> and continue with
@@ -45,10 +45,10 @@ Then open <http://127.0.0.1:12358/bookmarklets> and continue with
 - Keep the `127.0.0.1:` prefix on both ports. A single-user install has no
   login, so it must not be reachable from other machines.
 - Everything you create (conversations, projects, scripts, settings, API
-  keys) lives in the `voitta-compute-data` volume, not in the container.
+  keys) lives in the `voitta-bookmarklet-data` volume, not in the container.
 - To build the image yourself instead of pulling it:
-  `git clone https://github.com/voitta-ai/voitta-compute && cd voitta-compute && docker build -t voitta-compute .`,
-  then use `voitta-compute` as the image name above.
+  `git clone https://github.com/voitta-ai/voitta-bookmarklet && cd voitta-bookmarklet && docker build -t voitta-bookmarklet .`,
+  then use `voitta-bookmarklet` as the image name above.
 
 ## First run
 
@@ -88,12 +88,12 @@ mkcert -install                        # once per machine
 mkdir -p ~/.voitta-certs && cd ~/.voitta-certs
 mkcert -cert-file 127.0.0.1+1.pem -key-file 127.0.0.1+1-key.pem 127.0.0.1 localhost
 
-docker rm -f voitta-compute
-docker run -d --name voitta-compute --restart unless-stopped \
+docker rm -f voitta-bookmarklet
+docker run -d --name voitta-bookmarklet --restart unless-stopped \
   -p 127.0.0.1:12358:12358 -p 127.0.0.1:12359:12359 \
-  -v voitta-compute-data:/data \
+  -v voitta-bookmarklet-data:/data \
   -v ~/.voitta-certs:/app/backend/certs:ro \
-  ghcr.io/voitta-ai/voitta-compute:latest
+  ghcr.io/voitta-ai/voitta-bookmarklet:latest
 ```
 
 The backend then serves `https://127.0.0.1:12358`. Open
@@ -107,8 +107,8 @@ bookmarklet. The bridge port, 12359, stays plain HTTP by design.
 Needs Python 3.11+, Node.js 20+ and git.
 
 ```bash
-git clone https://github.com/voitta-ai/voitta-compute
-cd voitta-compute
+git clone https://github.com/voitta-ai/voitta-bookmarklet
+cd voitta-bookmarklet
 git submodule update --init --recursive --depth 1   # optional: source for the code RAG corpus
 ./build.sh                                          # frontend bundle + backend venv
 ./start.sh                                          # http://127.0.0.1:12358
@@ -123,7 +123,7 @@ mkdir -p backend/certs && (cd backend/certs && \
   mkcert -cert-file 127.0.0.1+1.pem -key-file 127.0.0.1+1-key.pem 127.0.0.1 localhost)
 ```
 
-Data defaults to `~/Library/Application Support/Voitta Compute/backend`. Set
+Data defaults to `~/Library/Application Support/Voitta Bookmarklet/backend`. Set
 `VOITTA_DATA_ROOT` to put it elsewhere.
 
 ### macOS menu-bar app
@@ -131,7 +131,7 @@ Data defaults to `~/Library/Application Support/Voitta Compute/backend`. Set
 `./tray.sh` runs the same backend from a menu-bar icon. The menu has About,
 Open, Copy bookmarklet, Settings (with the MCP-debug toggle), Show data
 folder, (Re)create TLS certs, Reset and Quit. `./build_app.sh` packages it as
-`Voitta Compute.app`. See [OPERATIONS.md §15](OPERATIONS.md#15-packaging--release).
+`Voitta Bookmarklet.app`. See [OPERATIONS.md §15](OPERATIONS.md#15-packaging--release).
 
 ### Shared server with Google sign-in
 
@@ -143,21 +143,37 @@ Each user then gets their own data. See [OPERATIONS.md](OPERATIONS.md).
 ## Upgrade, back up, remove
 
 ```bash
-docker pull ghcr.io/voitta-ai/voitta-compute:latest
-docker rm -f voitta-compute      # the data volume is kept
+docker pull ghcr.io/voitta-ai/voitta-bookmarklet:latest
+docker rm -f voitta-bookmarklet      # the data volume is kept
 # then re-run the docker run command from Quick start
 
-docker run --rm -v voitta-compute-data:/data -v "$PWD":/backup alpine \
-  tar czf /backup/voitta-compute-data.tgz -C /data .     # back up
+docker run --rm -v voitta-bookmarklet-data:/data -v "$PWD":/backup alpine \
+  tar czf /backup/voitta-bookmarklet-data.tgz -C /data .     # back up
 
-docker rm -f voitta-compute && docker volume rm voitta-compute-data   # remove everything
+docker rm -f voitta-bookmarklet && docker volume rm voitta-bookmarklet-data   # remove everything
 ```
+
+Coming from **Voitta Compute** (the previous name)? The old
+`ghcr.io/voitta-ai/voitta-compute` image gets no new releases. Your data
+is in the `voitta-compute-data` volume; copy it into the new one before
+the first `docker run`:
+
+```bash
+docker rm -f voitta-compute
+docker volume create voitta-bookmarklet-data
+docker run --rm -v voitta-compute-data:/from -v voitta-bookmarklet-data:/to \
+  alpine cp -a /from/. /to/
+```
+
+The macOS app moves its data from `Voitta Compute` to `Voitta Bookmarklet`
+on its first launch. Quit Voitta Compute first, then delete
+`Voitta Compute.app`.
 
 ## Configuration
 
 Settings are edited in the panel (gear icon). It has a Global tab and one tab
 for each plugin with settings. They are stored in
-`~/.config/voitta-compute/settings.json`, or `/data/config/settings.json`
+`~/.config/voitta-bookmarklet/settings.json`, or `/data/config/settings.json`
 under Docker. You don't need to edit that file by hand.
 
 Plugins add site-specific tools and prompts. Six ship today: `default`
@@ -169,7 +185,7 @@ Plugins add site-specific tools and prompts. Six ship today: `default`
 ### Layout
 
 ```
-voitta-compute/
+voitta-bookmarklet/
 ├── backend/          FastAPI + Chainlit, agent loop, tool registry
 ├── frontend/         Vite IIFE bundle, React widget, primitives
 ├── plugins/          Host-scoped extensions (manifest + BE module + FE widget + docs + prompt)
@@ -192,7 +208,7 @@ sibling listener on `:12359` serves the bridge for pages with a strict CSP.
 > - Core docs → `docs/`
 > - Plugin docs → `plugins/<name>/docs/`
 >
-> `build_app.sh` copies both into `src/voitta_compute/resources/` at build
+> `build_app.sh` copies both into `src/voitta_bookmarklet/resources/` at build
 > time. The `resources/` subdirectories (`docs/`, `frontend_dist/`,
 > `plugins/`, `vendor_js/`) are gitignored — never edit them directly.
 
@@ -256,15 +272,42 @@ specific file or pull neighbouring chunks via `rag_get_chunk_range`.
 Indexes live under `rag/.chroma{,_code}/` + `rag/.bm25{,_code}/` —
 gitignored, ~few MB combined, rebuilt in ~1 min.
 
-### MCP debugging
+### MCP endpoint
 
-The BE exposes a FastMCP server at `/mcp` for external MCP clients
-(Claude Desktop, `mcp-cli`, etc.). Gated three ways: tray-flag
-(`mcpDebugEnabled` off by default) + loopback-only peer + no browser
-`Origin` header. Tools: `mcp_sessions`, `mcp_page`, `mcp_eval`,
-`mcp_screenshot`. See [`backend/app/services/mcp_server.py`](backend/app/services/mcp_server.py).
+The BE exposes a FastMCP server at `/mcp` (streamable HTTP, on the
+app's own port) for external MCP clients such as Claude Code. It carries
+three tool families, each behind its own switch in the tray's Settings
+dialog (all off by default):
+
+- **Agent tools** (`vb_*`, switch "Expose agent tools to external
+  agents") — the tool registry the in-app agent uses, so an external
+  agent can do everything the in-app agent can, with no API key in the
+  app. `vb_sessions` → `vb_instructions` (the in-app agent's system
+  prompt for that page) → `vb_list_tools` / `vb_describe_tools` →
+  `vb_call_tool`. Page tools run in the chosen bookmarklet tab as its
+  user. Not offered: `ask_user_question` (the external agent asks its
+  own user). See [`backend/app/services/mcp_registry.py`](backend/app/services/mcp_registry.py).
+- **Debugging tools** (`mcp_*`, switch "Enable MCP debugging tools") —
+  inspect the app itself: `mcp_sessions`, `mcp_page`, `mcp_eval` (raw
+  JS in a tab), `mcp_screenshot`, devtools capture.
+  See [`backend/app/services/mcp_server.py`](backend/app/services/mcp_server.py).
+- **In-app agent** (`mcp_inject_text`, switch "Let external agents
+  message the in-app agent") — post a message into a tab's chat; the
+  in-app agent runs it as the user's own message, on the app's model
+  access.
+
+A family that is off is neither listed nor callable. Every tool's
+description starts with `[Agent tools]`, `[Debugging]` or `[In-app agent]`, and the server
+instructions tell clients which family to use for what. The endpoint is
+also loopback-only and refuses requests carrying a browser `Origin`.
 Under Docker the peer is the container bridge, not loopback, so `/mcp`
 refuses it; run from source to use it.
+
+Connect Claude Code (the URL is in the tray's Settings dialog):
+
+```bash
+claude mcp add --transport http voitta-bookmarklet https://127.0.0.1:12358/mcp/
+```
 
 ### Docs
 

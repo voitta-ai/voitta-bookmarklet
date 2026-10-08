@@ -55,5 +55,5 @@ The bookmarklet runs on third-party origins and must reach `127.0.0.1`. FastAPI:
 ## Conversation persistence
 
 `app/data/sqlite_layer.py` implements Chainlit's `DataLayer` interface.  
-DB path: `~/Library/Application Support/Voitta Compute/backend/conversations.sqlite`.  
+DB path: `~/Library/Application Support/Voitta Bookmarklet/backend/conversations.sqlite`.  
 Thread history is exposed via a patched `/chainlit/project/threads` endpoint (Chainlit's upstream requires auth; the patch serves history without it).

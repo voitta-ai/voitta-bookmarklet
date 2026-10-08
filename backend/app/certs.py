@@ -4,7 +4,7 @@ Called from the first-launch installer (phase 0) and from the
 "(Re)create TLS certificates…" tray menu item.
 
 mkcert resolution order:
-  1. Binary bundled in the .app (voitta_compute/resources/bin/mkcert)
+  1. Binary bundled in the .app (voitta_bookmarklet/resources/bin/mkcert)
   2. System PATH (``brew install mkcert`` in dev)
 """
 
@@ -39,8 +39,8 @@ def is_present() -> bool:
 def _mkcert_path() -> str | None:
     """Locate mkcert. Prefer the binary bundled inside the .app."""
     try:
-        import voitta_compute
-        bundled = Path(voitta_compute.__file__).resolve().parent / "resources" / "bin" / "mkcert"
+        import voitta_bookmarklet
+        bundled = Path(voitta_bookmarklet.__file__).resolve().parent / "resources" / "bin" / "mkcert"
         if bundled.is_file():
             import os, stat
             mode = bundled.stat().st_mode

@@ -5,7 +5,7 @@ lib-sources submodule SHAs haven't changed since the last successful
 build, the (slow) code corpus reindex is skipped.
 
 Stamp resolution:
-  - Frozen .app: reads ``voitta_compute/resources/code_sources_version.txt``
+  - Frozen .app: reads ``voitta_bookmarklet/resources/code_sources_version.txt``
     (written by ``build_app.sh`` via ``git submodule status lib-sources``).
   - Dev checkout:  runs ``git submodule status lib-sources`` live.
 
@@ -33,8 +33,8 @@ last_failure_detail: str = ""
 
 def _bundle_resources() -> Path | None:
     try:
-        import voitta_compute
-        return Path(voitta_compute.__file__).resolve().parent / "resources"
+        import voitta_bookmarklet
+        return Path(voitta_bookmarklet.__file__).resolve().parent / "resources"
     except ImportError:
         return None
 

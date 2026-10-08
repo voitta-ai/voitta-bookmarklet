@@ -56,6 +56,9 @@ if [ ! -x "$PY" ]; then
   exit 1
 fi
 
+# Adopt the Voitta Compute-era settings dir (one-time; see app/brand_migration.py).
+( cd backend && "$PY" -m app.brand_migration )
+
 # ---- 1b. NVIDIA GPU acceleration for embeddings ----------------------------
 # chromadb pulls CPU `onnxruntime` transitively, so build.sh/the installer
 # clobber any onnxruntime-gpu. On a CUDA box we (re)install onnxruntime-gpu
@@ -87,7 +90,7 @@ fi
 # the identical "only re-index what changed" behaviour on every start.
 # --rebuild-rag clears the stamps first to force a full rebuild.
 echo "[server-start] RAG: checking docs/source for changes…"
-( cd backend && VC_FORCE_RAG="$REBUILD_RAG" "$PY" - <<'PY'
+( cd backend && VB_FORCE_RAG="$REBUILD_RAG" "$PY" - <<'PY'
 import os, sys
 from app import rag_build
 
@@ -99,7 +102,7 @@ def log(line):
     _out.write("  " + line + "\n")
     _out.flush()
 
-if os.environ.get("VC_FORCE_RAG") == "1":
+if os.environ.get("VB_FORCE_RAG") == "1":
     for p in (rag_build._docs_stamp_path(), rag_build._deployed_stamp_path()):
         try:
             p.unlink()

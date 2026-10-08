@@ -1,4 +1,4 @@
-# Voitta Compute — Operations & Data Flow
+# Voitta Bookmarklet — Operations & Data Flow
 
 > A detailed, diagram-first walkthrough of how the system actually works at
 > runtime: the menu-bar shell and first-launch installer, TLS + bookmarklet
@@ -32,7 +32,7 @@
 
 ## 1. System overview
 
-Voitta Compute is a macOS menu-bar app ([backend/app/desktop.py](backend/app/desktop.py),
+Voitta Bookmarklet is a macOS menu-bar app ([backend/app/desktop.py](backend/app/desktop.py),
 `rumps`) that hosts a single FastAPI/Chainlit ASGI app
 ([backend/app/main.py](backend/app/main.py)) on two local listeners — TLS on
 `127.0.0.1:12358` and plain-HTTP on `127.0.0.1:12359`. A **bookmarklet**
@@ -81,7 +81,7 @@ flowchart TB
         SCRD[("scripts/ + scripts_state/")]
         PYS[("python_storage/cache/")]
         RAGI[("rag/.chroma · .bm25 ·<br/>.chroma_code · .bm25_code")]
-        SET[("~/.config/voitta-compute/<br/>settings.json")]
+        SET[("~/.config/voitta-bookmarklet/<br/>settings.json")]
     end
 
     REMOTE["Remote MCP servers<br/>(e.g. voitta-rag-enterprise)"]
@@ -130,12 +130,12 @@ flowchart TB
 ### Boot sequence
 
 Entry point in the frozen `.app` is
-[src/voitta_compute/\_\_main\_\_.py](src/voitta_compute/__main__.py); dev mode
+[src/voitta_bookmarklet/\_\_main\_\_.py](src/voitta_bookmarklet/__main__.py); dev mode
 runs uvicorn directly via [start.sh](start.sh).
 
 ```mermaid
 flowchart TB
-    M["__main__.py"] --> LOCK["instance flock<br/>~/…/Voitta Compute/.voitta.lock<br/>(second launch exits)"]
+    M["__main__.py"] --> LOCK["instance flock<br/>~/…/Voitta Bookmarklet/.voitta.lock<br/>(second launch exits)"]
     LOCK --> SEED["seed bundle resources →<br/>frontend/dist · docs/ · plugins/ (reseeded each launch) ·<br/>lib-sources/ (stamp-gated)"]
     SEED --> ENV["set env: VOITTA_PROJECT_ROOT ·<br/>VOITTA_DATA_ROOT · PIP_PREFIX=userbase/ ·<br/>redirect stdout/stderr → voitta.log"]
     ENV --> DESK["desktop.py main()"]
@@ -260,7 +260,7 @@ sequenceDiagram
   isn't shimmed) and chat images are fetched into `blob:` URLs to dodge
   `img-src` CSP ([frontend/src/chat/BridgeImg.tsx](frontend/src/chat/BridgeImg.tsx)).
 - The widget mounts in a **closed shadow DOM** under a fixed host element
-  (`#voitta-compute-host`, z-index 2147483647); all CSS is inlined into one
+  (`#voitta-bookmarklet-host`, z-index 2147483647); all CSS is inlined into one
   `<style>` node, themes switch via `data-theme`, layout (`chat-left`/
   `chat-right`) via `data-layout`. Browser-side primitives that need DOM
   access get the shadow root through `window.VoittaBookmarklet.getShadowRoot()`.
@@ -806,7 +806,7 @@ installer phase 3, or lazily on first `rag_query` if missing. Rebuilds are
 skipped when stamps match: docs = SHA-256 over every `.md` (path, content)
 under `DOCS_DIR` + `PLUGINS_DIR`; code = the lib-sources submodule SHAs (dev:
 `git submodule status`; frozen app: bundled `code_sources_version.txt`).
-Stamps live at `~/.config/voitta-compute/.docs_content_hash` /
+Stamps live at `~/.config/voitta-bookmarklet/.docs_content_hash` /
 `.code_source_hash`; the index lives in `<repo>/rag/` (dev) or the seeded data
 dir (app). `RagNotBuilt` errors from the tools carry a diagnostic of which
 piece is missing. Embedding runs on CoreML (Apple Silicon) or CUDA when
@@ -820,7 +820,7 @@ Linux and swaps in `onnxruntime-gpu` + cuDNN.
 
 ## 12. Settings & persistence
 
-### Settings (`~/.config/voitta-compute/settings.json`, 0600)
+### Settings (`~/.config/voitta-bookmarklet/settings.json`, 0600)
 
 One nested JSON blob, atomic-written (tmpfile + `os.replace`)
 ([backend/app/services/user_settings.py](backend/app/services/user_settings.py)):
@@ -867,7 +867,7 @@ token, stored separately (see below), never in `settings.json`.
 Chainlit threads/steps persist in SQLite via a custom data layer
 ([backend/app/data/sqlite_layer.py](backend/app/data/sqlite_layer.py)) at
 `<USER_DATA_ROOT>/conversations.sqlite`
-(`~/Library/Application Support/Voitta Compute/backend/conversations.sqlite`
+(`~/Library/Application Support/Voitta Bookmarklet/backend/conversations.sqlite`
 on desktop). Desktop/dev maps everything to a single "local" user; uploads go
 through a `LocalStorageClient` into a user-scoped folder.
 
@@ -1123,7 +1123,7 @@ app is on *that page's origin* — not necessarily this backend.
 | Var | Meaning | Default |
 |-----|---------|---------|
 | `VOITTA_PROJECT_ROOT` | root for certs/, rag/ siblings | set by `.app` launcher; dev: `backend/` |
-| `VOITTA_DATA_ROOT` | user data root | `~/Library/Application Support/Voitta Compute/backend` |
+| `VOITTA_DATA_ROOT` | user data root | `~/Library/Application Support/Voitta Bookmarklet/backend` |
 | `VOITTA_FRONTEND_DIST` | compiled widget dir | `.app` bundle path; dev: `frontend/dist` |
 | `VOITTA_HOST` / `VOITTA_PORT` / `VOITTA_BRIDGE_PORT` | listener overrides (shell mode, [start.sh](start.sh)) | `127.0.0.1` / `12358` / `12359` |
 | `VOITTA_PUBLIC_BASE_URL` | public origin for server deployments (bookmarklet links) | request base URL |
@@ -1132,13 +1132,13 @@ app is on *that page's origin* — not necessarily this backend.
 | `VOITTA_GOOGLE_AUTH_CLIENT_ID/SECRET` | enables server-mode auth | unset (desktop: no auth) |
 | `VOITTA_AUTH_SECRET` | Chainlit JWT key | generated, persisted at `<data>/auth_secret` |
 | `CHAINLIT_APP_ROOT` | set early — chainlit resolves FILES_DIRECTORY at import | set by desktop.py |
-| `PIP_PREFIX` | runtime installs target | `…/Voitta Compute/userbase` (.app) |
+| `PIP_PREFIX` | runtime installs target | `…/Voitta Bookmarklet/userbase` (.app) |
 | `VOITTA_DOCS_DIR` / `VOITTA_PLUGINS_DIR` / `VOITTA_LIBS_DIR` / `VOITTA_RAG_DIR` | RAG build inputs/output | derived from config |
 
 ### On-disk map (desktop `.app`)
 
 ```
-~/Library/Application Support/Voitta Compute/
+~/Library/Application Support/Voitta Bookmarklet/
 ├── .voitta.lock                  single-instance flock
 ├── backend/                      ← VOITTA_PROJECT_ROOT = VOITTA_DATA_ROOT
 │   ├── logs/                     all logs; fresh each launch, prior runs → logs/previous/run-*
@@ -1158,7 +1158,7 @@ app is on *that page's origin* — not necessarily this backend.
 │   └── users/<slug>/…            (server mode only: per-user roots — incl. its own claude_code/)
 ├── userbase/                     PIP_PREFIX site-packages (wiped on version bump)
 ├── frontend/dist/ · docs/ · plugins/ · lib-sources/   seeded from the bundle
-~/.config/voitta-compute/
+~/.config/voitta-bookmarklet/
 ├── settings.json                 keys · models · plugin config (0600)
 └── .docs_content_hash · .code_source_hash   RAG build stamps
 ```
@@ -1190,16 +1190,16 @@ capture stays recoverable. Retention is capped at the last 3 runs
 ## 15. Packaging & release
 
 - **Briefcase** macOS app, configured in the repo-root
-  [pyproject.toml](pyproject.toml): bundle id `ai.voitta.voitta-compute`,
+  [pyproject.toml](pyproject.toml): bundle id `ai.voitta.voitta-bookmarklet`,
   `LSUIElement` (menu-bar only, no Dock), arm64-only, macOS 14+. Bundled
-  sources: `src/voitta_compute/` (launcher + `resources/`: frontend_dist,
+  sources: `src/voitta_bookmarklet/` (launcher + `resources/`: frontend_dist,
   docs, plugins, mkcert binary, wheels, gitmodules pins), `backend/app/`,
   `scripts/`.
 - Hardened-runtime entitlements for notarisation: `allow-jit`,
   `allow-unsigned-executable-memory`, `disable-library-validation`,
   `allow-dyld-environment-variables`.
 - **Build**: `./build.sh` (venv + deps + wheels) then `./build_app.sh`
-  (briefcase → `build/voitta-compute/macos/app/Voitta Compute.app`;
+  (briefcase → `build/voitta-bookmarklet/macos/app/Voitta Bookmarklet.app`;
   `--package`/`--release` produce a signed, notarised DMG under `dist/` and
   `--release` bumps the patch version in pyproject).
 - **Known pitfall**: `build_app.sh` picks `briefcase update` vs `create` by
@@ -1207,16 +1207,16 @@ capture stays recoverable. Retention is capped at the last 3 runs
   removed (post-clean state) makes `update` fail with `FileNotFoundError`
   on `…/Contents/Resources/app` while the script still exits 0 (the error
   is masked by the output pipe). Recovery:
-  `rm -rf build/voitta-compute && briefcase create macOS app && briefcase build macOS app`.
-- **Version**: [src/voitta_compute/_version.py](src/voitta_compute/_version.py);
+  `rm -rf build/voitta-bookmarklet && briefcase create macOS app && briefcase build macOS app`.
+- **Version**: [src/voitta_bookmarklet/_version.py](src/voitta_bookmarklet/_version.py);
   read at runtime by `installer.current_app_version()` and compared against
   `.deployed_version` to trigger the fresh-deploy wipe (§2).
 - **Frontend**: `cd frontend && npm run build` → `dist/widget.js`. The build
-  must be copied into `src/voitta_compute/resources/frontend_dist/` for the
+  must be copied into `src/voitta_bookmarklet/resources/frontend_dist/` for the
   frozen app (release workflow); dev serves `frontend/dist/` directly.
 
 ---
 
 *Generated from a source trace of `backend/app/`, `frontend/src/`,
-`src/voitta_compute/`, and `plugins/`. File paths are the durable anchors —
+`src/voitta_bookmarklet/`, and `plugins/`. File paths are the durable anchors —
 re-verify line-level specifics against the code.*

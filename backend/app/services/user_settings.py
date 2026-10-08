@@ -28,7 +28,7 @@ from typing import Any
 
 
 # Sourced from ``app.config`` so the chainlit build keeps its own
-# settings file (``~/.config/voitta-compute/settings.json``)
+# settings file (``~/.config/voitta-bookmarklet/settings.json``)
 # rather than clobbering / inheriting the legacy bookmarklet's blob.
 from app.config import USER_CONFIG_DIR, USER_SETTINGS_PATH
 
@@ -71,12 +71,52 @@ def mcp_debug_enabled() -> bool:
 
 def set_mcp_debug_enabled(enabled: bool) -> None:
     """Persist the MCP-debug kill switch. Used by the tray menu."""
+    _set_flag("mcpDebugEnabled", enabled)
+
+
+def mcp_tools_enabled() -> bool:
+    """Whether ``/mcp`` also exposes the agent's tool registry (the ``vb_*``
+    tools) so an external agent — Claude Code, say — can drive everything
+    the in-app agent can, without an API key in the app. Default **False**,
+    and separate from the debugging switch: this surface runs Python
+    (``run_script``) and writes to connected services, a wider grant than
+    page inspection. Read per request, like the debug switch.
+    """
+    try:
+        return bool(read().get("mcpToolsEnabled", False))
+    except Exception:
+        return False
+
+
+def set_mcp_tools_enabled(enabled: bool) -> None:
+    """Persist the agent-tools switch. Used by the tray menu."""
+    _set_flag("mcpToolsEnabled", enabled)
+
+
+def mcp_chat_enabled() -> bool:
+    """Whether ``/mcp`` offers ``mcp_inject_text``: an external agent posting
+    messages into the in-app agent's chat. Default **False**, and separate
+    from debugging — a posted message runs a full in-app turn as the user,
+    on the app's model access. Read per request.
+    """
+    try:
+        return bool(read().get("mcpChatEnabled", False))
+    except Exception:
+        return False
+
+
+def set_mcp_chat_enabled(enabled: bool) -> None:
+    """Persist the in-app-agent switch. Used by the tray menu."""
+    _set_flag("mcpChatEnabled", enabled)
+
+
+def _set_flag(key: str, enabled: bool) -> None:
     blob: dict[str, Any] = {}
     try:
         blob = read()
     except Exception:
         blob = {}
-    blob["mcpDebugEnabled"] = bool(enabled)
+    blob[key] = bool(enabled)
     write(blob)
 
 

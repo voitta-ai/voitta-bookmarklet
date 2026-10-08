@@ -6,7 +6,7 @@ entirely on the backend (token store + token refresh); the frontend's
 only role is the Settings panel that drives the connect flow per account.
 
 Storage (``settings.googleOAuth`` in the backend-owned settings file —
-``~/.config/voitta-compute/settings.json`` on desktop, per-user file in
+``~/.config/voitta-bookmarklet/settings.json`` on desktop, per-user file in
 server mode)::
 
     "googleOAuth": {

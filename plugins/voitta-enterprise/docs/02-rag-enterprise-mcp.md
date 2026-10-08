@@ -416,7 +416,7 @@ up on every conversation). Refresh after:
 ## Settings keys
 
 The plugin's settings live under the `plugins.voitta-enterprise.*`
-namespace in `~/.config/voitta-compute/settings.json`:
+namespace in `~/.config/voitta-bookmarklet/settings.json`:
 
 ```json
 {

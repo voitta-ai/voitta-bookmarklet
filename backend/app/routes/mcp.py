@@ -1,9 +1,14 @@
-"""Mount the embedded FastMCP debugging server at ``/mcp``.
+"""Mount the embedded FastMCP server at ``/mcp``.
 
-Streamable-HTTP transport on the existing FastAPI listener — no new
-port. Three layers of gate, in order:
+It carries three tool families (see ``app.services.mcp_server``): the
+``mcp_*`` debugging tools, the ``vb_*`` agent tools (the tool registry,
+for external agents) and ``mcp_inject_text`` (messages to the in-app
+agent). Streamable-HTTP transport on the existing FastAPI listener — no
+new port. Three layers of gate, in order:
 
-  1. ``mcpDebugEnabled`` user setting (tray-bar Settings toggle).
+  1. ``mcpDebugEnabled``, ``mcpToolsEnabled`` or ``mcpChatEnabled`` user
+     setting (tray-bar Settings toggles); each family also checks its own
+     switch per call.
   2. Loopback-only peer (``127.0.0.1`` or ``::1``).
   3. No browser ``Origin`` header — use a CLI / desktop MCP client,
      not a tab. Defends against drive-by JS calls from a malicious
@@ -49,11 +54,15 @@ class _MCPGate:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
-        if not _user_settings.mcp_debug_enabled():
+        # Open when either tool family is on; each family then checks its
+        # own switch per call (mcp_server._FamilyGate), so one switch never
+        # exposes the other family.
+        if not (_user_settings.mcp_debug_enabled() or _user_settings.mcp_tools_enabled()
+                or _user_settings.mcp_chat_enabled()):
             await _refuse(
                 403,
-                "MCP debugging is disabled. Enable it from the Voitta tray "
-                "icon → Settings → 'Enable MCP debugging'.",
+                "The MCP endpoint is disabled. Enable it from the Voitta tray "
+                "icon → Settings (any of the MCP switches).",
             )(scope, receive, send)
             return
         request = Request(scope, receive)

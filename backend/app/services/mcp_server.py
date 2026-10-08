@@ -1,9 +1,19 @@
-"""Embedded MCP server — bookmarklet debugging tools.
+"""Embedded MCP server — debugging tools and agent tools.
+
+Two tool families on one server, told apart by name prefix, a tag at the
+start of every description, and the server instructions:
+
+  * ``mcp_*`` — **debugging** (this module): inspect and poke the app —
+    raw JS in a tab, page HTML, screenshots, devtools capture.
+  * ``vb_*`` — **agent tools** (:mod:`app.services.mcp_registry`): the
+    tool registry the in-app agent uses, for an external agent to drive.
 
 Mounted at ``/mcp`` (streamable-HTTP transport on the existing FastAPI
 listener — no second port). Gated by:
 
-  * ``mcpDebugEnabled`` user setting (tray-bar toggle)
+  * per family, its own user setting (tray-bar toggles):
+    ``mcpDebugEnabled`` for ``mcp_*``, ``mcpToolsEnabled`` for ``vb_*`` —
+    a family that's off is neither listed nor callable (``_FamilyGate``)
   * Loopback-only peer (127.0.0.1 / ::1)
   * No browser ``Origin`` header (use a CLI/desktop MCP client, not
     a tab — defends against drive-by JS calls from a malicious page)
@@ -32,6 +42,8 @@ import logging
 from typing import Any
 
 from fastmcp import FastMCP
+from fastmcp.exceptions import ToolError
+from fastmcp.server.middleware import Middleware, MiddlewareContext
 
 
 _log = logging.getLogger(__name__)
@@ -50,6 +62,20 @@ def _err(kind: str, message: str, **extra: Any) -> dict:
 # enough for any reasonable primitive (the longest is the screenshot
 # auto-size dance at ~5s) and short enough to surface failure quickly.
 _MCP_CALL_TIMEOUT_S = 15
+
+# Liveness ping sent ahead of any call that may wait longer than this. A tab
+# whose socket is still open but whose page has stopped answering (browser
+# froze/throttled a background tab, page JS wedged) otherwise costs the full
+# call timeout per attempt, which reads as a silent hang from the client.
+_PING_TIMEOUT_S = 3
+_PING_PRIMITIVE = "get_page_title"
+
+_NOT_RESPONDING = (
+    "The tab is still connected but its page stopped answering (no reply to a "
+    "{s}s ping). Usually the browser froze or throttled it as a background "
+    "tab, or the page is stuck. Bring the tab to the front — reload it if that "
+    "doesn't help — then retry. Other sessions: mcp_sessions."
+)
 
 
 async def _call_in_session(
@@ -106,8 +132,9 @@ async def _call_in_session(
     try:
         from chainlit.server import sio  # type: ignore
         sid = socket_id or session_id
-        connected = sio.manager.is_connected(sid)
-        rooms = list(sio.manager.get_rooms(sid) or [])
+        # Chainlit's socket lives on the default namespace.
+        connected = sio.manager.is_connected(sid, "/")
+        rooms = list(sio.manager.get_rooms(sid, "/") or [])
         _log.info("MCP▶ sio.manager.is_connected(%s)=%s rooms=%s", sid, connected, rooms)
         if not connected:
             _log.warning("MCP▶ socket %s not connected in sio.manager — fast-fail", sid)
@@ -130,6 +157,21 @@ async def _call_in_session(
                             session_id=session_id)
         except Exception as exc2:
             _log.warning("MCP▶ ws_sessions_id check also failed (%s) — proceeding", exc2)
+
+    # A connected socket doesn't mean a live page. Ping first so a frozen tab
+    # fails in ~_PING_TIMEOUT_S instead of the full timeout_s.
+    if primitive != _PING_PRIMITIVE and timeout_s > _PING_TIMEOUT_S:
+        ping = await _call_in_session(
+            session_id, _PING_PRIMITIVE, {}, timeout_s=_PING_TIMEOUT_S,
+        )
+        if ping.get("error") == "no_ack":
+            return _err(
+                "tab_not_responding",
+                _NOT_RESPONDING.format(s=_PING_TIMEOUT_S),
+                session_id=session_id, primitive=primitive,
+            )
+        if not ping.get("ok"):
+            return ping
 
     _log.info("MCP▶ building ChainlitEmitter and calling send_call_fn primitive=%s", primitive)
     t0 = time.perf_counter()
@@ -181,7 +223,9 @@ async def _call_in_session(
         _log.warning("MCP▶ result is None (chainlit-side timeout) primitive=%s elapsed=%dms",
                      primitive, elapsed_ms)
         return _err("no_ack",
-                    f"chainlit returned None — timeout inside send_call_fn. elapsed={elapsed_ms}ms",
+                    f"no reply from the tab within {timeout_s:g}s ({primitive}). "
+                    "The page answered a ping just before, so the primitive itself "
+                    "is slow or stuck — not the tab.",
                     session_id=session_id, primitive=primitive, elapsed_ms=elapsed_ms)
 
     _log.info("MCP▶ SUCCESS primitive=%s elapsed=%dms", primitive, elapsed_ms)
@@ -194,17 +238,94 @@ async def _call_in_session(
     return out
 
 
+def _eval_timeout_s(await_ms: int) -> float:
+    """Round-trip budget for ``eval_js``: the script's own deadline plus
+    transport grace. A fixed 15 s cut off scripts the caller had explicitly
+    allowed to run longer — the tab kept running them, the caller saw a
+    timeout."""
+    return max(float(_MCP_CALL_TIMEOUT_S), max(0, int(await_ms)) / 1000 + 5)
+
+
+_INSTRUCTIONS = """\
+Voitta Bookmarklet — the local Mac app behind the Voitta browser bookmarklet.
+Its tools come in two families; use the one that matches the job.
+
+AGENT TOOLS (vb_*) — do the user's work. The same tool registry the in-app
+Voitta agent uses (reports, LinkedIn, eBay, Google, projects, Python via
+run_script, …), so you can act as that agent. Workflow:
+  1. vb_sessions — pick the page (bookmarklet tab) to work on.
+  2. vb_instructions — read the agent's rules for that page. Follow them.
+  3. vb_list_tools, then vb_describe_tools for the tools you'll use.
+  4. vb_call_tool(name, arguments, session_id).
+
+DEBUGGING TOOLS (mcp_*) — inspect and poke the app itself: raw JavaScript
+in a tab (mcp_eval), the page HTML, screenshots, console/network capture.
+For developing and diagnosing Voitta; not for doing user tasks — the
+agent tools carry validation, auth and the rules that raw JavaScript
+bypasses.
+
+IN-APP AGENT (mcp_inject_text) — post a message into a tab's chat; the
+in-app Voitta agent runs it as the user's own message, on the app's
+model access, and the user sees it in their chat pane.
+
+Each family has its own switch in the Voitta tray → Settings; a family
+that is switched off is not listed. Tool descriptions are tagged
+[Agent tools], [Debugging] or [In-app agent].
+"""
+
+
+# Tools that post into the in-app agent's chat. Their own family: a posted
+# message runs a full in-app turn on the user's model access, with the
+# user's authority — a wider grant than inspecting the app.
+_CHAT_TOOLS = frozenset({"mcp_inject_text"})
+
+
+class _FamilyGate(Middleware):
+    """Hide and refuse each tool family by its own setting, read per request
+    so the tray switches apply without a restart."""
+
+    @staticmethod
+    def _family(name: str) -> tuple[bool, str]:
+        """(enabled, the switch's label in the tray) for a tool name."""
+        from app.services import user_settings as us
+        from app.services.mcp_registry import FAMILY_PREFIX
+
+        if name in _CHAT_TOOLS:
+            return us.mcp_chat_enabled(), "Let external agents message the in-app agent"
+        if name.startswith(FAMILY_PREFIX):
+            return us.mcp_tools_enabled(), "Expose agent tools to external agents"
+        return us.mcp_debug_enabled(), "Enable MCP debugging tools"
+
+    async def on_list_tools(self, context: MiddlewareContext, call_next):
+        tools = await call_next(context)
+        return [t for t in tools if self._family(t.name)[0]]
+
+    async def on_call_tool(self, context: MiddlewareContext, call_next):
+        name = context.message.name
+        enabled, switch = self._family(name)
+        if not enabled:
+            raise ToolError(f"{name} is switched off — turn on '{switch}' in the Voitta "
+                            "tray → Settings.")
+        return await call_next(context)
+
+
 def get_server() -> FastMCP:
-    """Lazy singleton — FastMCP instance with the debugging tools."""
+    """Lazy singleton — FastMCP instance with both tool families: the
+    ``mcp_*`` debugging tools below and the ``vb_*`` agent tools
+    (:mod:`app.services.mcp_registry`)."""
     global _SERVER
     if _SERVER is not None:
         return _SERVER
 
-    mcp = FastMCP("voitta-compute-debug")
+    mcp = FastMCP("voitta-bookmarklet", instructions=_INSTRUCTIONS, middleware=[_FamilyGate()])
+
+    from app.services.mcp_registry import register as register_agent_tools
+
+    register_agent_tools(mcp)
 
     @mcp.tool()
     async def mcp_session_check(session_id: str, timeout_s: int = 5) -> dict:
-        """Diagnostic round-trip probe.
+        """[Debugging] Diagnostic round-trip probe.
 
         Calls the lightest-possible primitive (``get_page_title``) with
         a short timeout. Returns ``{ok: true, ms, title}`` if the FE
@@ -229,7 +350,7 @@ def get_server() -> FastMCP:
 
     @mcp.tool()
     async def mcp_sessions() -> dict:
-        """List every bookmarklet session the backend currently knows about.
+        """[Debugging] List every bookmarklet session the backend currently knows about.
 
         Returns ``{count, sessions: [{session_id, connected, host, url,
         title, user_agent, created_at, last_seen, extras}]}``. The
@@ -243,7 +364,7 @@ def get_server() -> FastMCP:
 
     @mcp.tool()
     async def mcp_page(session_id: str) -> dict:
-        """Return URL + title + path to a file containing the full page HTML.
+        """[Debugging] Return URL + title + path to a file containing the full page HTML.
 
         The HTML is written to a dump file (cleared on app restart) rather
         than returned inline — page DOMs can exceed 1 MB. Read the file
@@ -282,7 +403,9 @@ def get_server() -> FastMCP:
         js: str,
         await_ms: int = 30_000,
     ) -> dict:
-        """Run arbitrary JavaScript in a bookmarklet tab.
+        """[Debugging] Run arbitrary JavaScript in a bookmarklet tab. For
+        inspecting the app — to do a user's task use the agent tools
+        (vb_call_tool), which carry validation and the agent's rules.
 
         The code body is wrapped in an ``AsyncFunction`` — ``await`` at
         top level works, and ``return X`` sends ``X`` back. Console
@@ -291,18 +414,23 @@ def get_server() -> FastMCP:
         rather than transport errors.
 
         ``await_ms`` is a hard timeout: a runaway script aborts at
-        this deadline so the call_fn round-trip can't hang.
+        this deadline so the call_fn round-trip can't hang. The
+        round-trip itself waits ``await_ms`` plus a few seconds of
+        transport grace (never less than the default call timeout).
         """
         _log.info("MCP▶ mcp_eval called session=%s await_ms=%s js_len=%d", session_id, await_ms, len(js or ""))
         if not js or not js.strip():
             return _err("bad_request", "js is required", session_id=session_id)
         return await _call_in_session(
-            session_id, "eval_js", {"js": js, "await_ms": int(await_ms)}
+            session_id, "eval_js", {"js": js, "await_ms": int(await_ms)},
+            timeout_s=_eval_timeout_s(await_ms),
         )
 
     @mcp.tool()
     async def mcp_inject_text(session_id: str, text: str) -> dict:
-        """Inject a user message into a bookmarklet chat and execute it.
+        """[In-app agent] Post a user message into a bookmarklet chat and run it.
+        The in-app agent handles it as the user's own message, on the
+        app's model access.
 
         Same path the voice assistant uses (``submit_user_text``
         primitive → Composer's sendMessage → ``@cl.on_message``), minus
@@ -317,7 +445,7 @@ def get_server() -> FastMCP:
 
     @mcp.tool()
     async def mcp_screenshot(session_id: str) -> dict:
-        """Silent screenshot of the currently-mounted report pane.
+        """[Debugging] Silent screenshot of the currently-mounted report pane.
 
         Calls the same ``screenshot_report`` primitive the chat LLM
         uses, but bypasses chat — no message in the pane, no LLM turn.
@@ -337,7 +465,7 @@ def get_server() -> FastMCP:
 
     @mcp.tool()
     async def mcp_devtools_install(session_id: str) -> dict:
-        """Install console / network / error interceptors in a bookmarklet tab.
+        """[Debugging] Install console / network / error interceptors in a bookmarklet tab.
 
         Wraps ``console.*``, ``fetch``, ``XMLHttpRequest``, ``window.onerror``
         and ``unhandledrejection`` with thin shims that write to a ring buffer
@@ -358,7 +486,7 @@ def get_server() -> FastMCP:
         limit: int = 100,
         clear: bool = False,
     ) -> dict:
-        """Read captured devtools data, written to a file for Claude Code to read.
+        """[Debugging] Read captured devtools data, written to a file for Claude Code to read.
 
         Requires ``mcp_devtools_install`` to have been called first.
 
@@ -414,7 +542,7 @@ def get_server() -> FastMCP:
 
     @mcp.tool()
     async def mcp_devtools_clear(session_id: str) -> dict:
-        """Clear all captured devtools data in a bookmarklet tab.
+        """[Debugging] Clear all captured devtools data in a bookmarklet tab.
 
         Empties the console, network, and error ring buffers without
         uninstalling the interceptors. Useful before triggering a specific

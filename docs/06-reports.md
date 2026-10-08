@@ -4,7 +4,7 @@ A report is a user-authored Python script that produces an HTML string. The stri
 
 ## Script contract
 
-Scripts live at `~/Library/Application Support/Voitta Compute/backend/scripts/<name>/code.py`.
+Scripts live at `~/Library/Application Support/Voitta Bookmarklet/backend/scripts/<name>/code.py`.
 
 Every script must define a `build(ctx)` function at the top level. It must either:
 - Return a raw HTML string, **or**

@@ -1,8 +1,8 @@
-# Voitta Compute — Docs
+# Voitta Bookmarklet — Docs
 
 | File | Topic |
 |---|---|
-| `00-overview.md` | What Voitta Compute is |
+| `00-overview.md` | What Voitta Bookmarklet is |
 | `01-architecture.md` | Request flow, key modules |
 | `02-frontend.md` | React widget, shadow DOM, bookmarklet, thread picker |
 | `03-providers.md` | Anthropic / OpenAI / Gemini, settings.json |

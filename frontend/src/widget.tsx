@@ -20,7 +20,7 @@ import { cssText } from "./styles";
 // ``frontend/`` → ``../..`` = repo root → + ``/plugins/...``.
 import.meta.glob("../../plugins/**/frontend/widget.ts", { eager: true });
 
-const HOST_ID = "voitta-compute-host";
+const HOST_ID = "voitta-bookmarklet-host";
 
 function deriveBackendOrigin(): string {
   // Hardened-site bridge path: the bookmarklet eval's the bundle (no
