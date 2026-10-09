@@ -13,17 +13,21 @@ import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from app.agent import Attachment, RunContext, run_turn
 from app.config import DEFAULT_MAX_TOKENS, DEFAULT_MAX_TOOL_ITERATIONS, PROJECT_ROOT
-from app.eval.config import SCHEMA_VERSION, tenant_dir
+from app.eval.config import SCHEMA_VERSION, browser_hosts, tenant_dir
 from app.eval.redact import Redactor
 from app.eval.trace import Trace
-from app.eval.tools import ALLOWED_TARGETS, TEST_TOOL_NAMES, TEST_TOOLS, TestSink, decide
+from app.eval.tools import (
+    ALLOWED_TARGETS, BROWSER_TOOL_NAMES, TEST_TOOL_NAMES, TEST_TOOLS, TestSink, decide,
+)
 from app.services.llm import ToolSchema, default_model_for, resolve_api_key
 from app.services.llm.base import Message as LlmMessage
 from app.settings import load as load_user_settings
-from app.tools.registry import ToolCtx, ToolResult
+from app.tools.browser import UnavailableTransport
+from app.tools.registry import ToolCtx, ToolResult, registry
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +69,7 @@ class EvalSession:
     config: dict[str, Any]
     config_digest: str
     sink: TestSink
+    browser: Any = None  # app.eval.browser_worker.BrowserWorker, or None
     messages: list[LlmMessage] = field(default_factory=list)
     last_run_id: str | None = None
     idempotency: dict[str, str] = field(default_factory=dict)
@@ -85,11 +90,37 @@ _sessions: dict[tuple[str, str], EvalSession] = {}
 _runs: dict[tuple[str, str], EvalRun] = {}
 
 
-def create_session(tenant: str, provider: str | None, model: str | None) -> EvalSession:
+_LOOPBACK = {"127.0.0.1", "localhost", "::1", "0.0.0.0"}
+
+
+def _check_browser_url(url: str, server: tuple[str, int] | None) -> None:
+    parts = urlsplit(url)
+    host = (parts.hostname or "").lower()
+    if parts.scheme not in ("http", "https") or not host:
+        raise EvalError(400, "browser.url must be an http(s) URL")
+    if host not in browser_hosts():
+        raise EvalError(400, f"browser host {host!r} is not granted "
+                             f"(VOITTA_EVAL_BROWSER_HOSTS: {sorted(browser_hosts())})")
+    # The fixture's origin is the only one the page may reach. It must never
+    # be this server, or a script would get same-origin access to its API.
+    port = parts.port or {"http": 80, "https": 443}[parts.scheme]
+    if server is not None and port == server[1] and (
+        host in _LOOPBACK or host == str(server[0]).lower()
+    ):
+        raise EvalError(400, "browser.url must not point at this server")
+    try:
+        importlib.import_module("playwright")
+    except ImportError as exc:
+        raise EvalError(400, "the browser worker needs the optional playwright package "
+                             "(pip install playwright; playwright install chromium)") from exc
+
+
+async def create_session(tenant: str, provider: str | None, model: str | None,
+                         browser_url: str | None = None,
+                         server: tuple[str, int] | None = None) -> EvalSession:
     # Same tool and plugin registration the chat UI gets.
     importlib.import_module("app.chainlit_app")
     from app.plugins import for_host
-    from app.tools.registry import registry
 
     settings = load_user_settings()  # snapshot: never re-read during the session
     provider = provider or settings.get("provider", "anthropic")
@@ -99,6 +130,8 @@ def create_session(tenant: str, provider: str | None, model: str | None) -> Eval
     if not api_key:
         raise EvalError(400, f"no credential configured for provider {provider!r}")
     model = model or (settings.get("models") or {}).get(provider) or default_model_for(provider)
+    if browser_url is not None:
+        _check_browser_url(browser_url, server)
 
     # Production default prompt (plugins for no host), without the per-user
     # project block, which would leak the operator's live project into a probe.
@@ -122,7 +155,9 @@ def create_session(tenant: str, provider: str | None, model: str | None) -> Eval
         "system_prompt_sha256": hashlib.sha256(system.encode()).hexdigest(),
         "tools_sha256": _sha([[t.name, t.description, t.input_schema] for t in tools]),
         "tool_names": [t.name for t in tools],
-        "executable_tools": sorted(TEST_TOOL_NAMES),
+        "executable_tools": sorted(TEST_TOOL_NAMES | BROWSER_TOOL_NAMES),
+        "browser": {"attached": browser_url is not None,
+                    "origin": _origin(browser_url) if browser_url else None},
         "allowed_targets": list(ALLOWED_TARGETS),
         "max_tokens": max_tokens,
         "max_tool_iterations": max_iters,
@@ -137,8 +172,19 @@ def create_session(tenant: str, provider: str | None, model: str | None) -> Eval
         sink=TestSink(Path(), Redactor([api_key])),
     )
     session.sink.path = tenant_dir(tenant) / "sessions" / session.id / "sink.jsonl"
+    if browser_url is not None:
+        from app.eval.browser_worker import start_worker
+        try:
+            session.browser = await start_worker(browser_url)
+        except Exception as exc:
+            raise EvalError(502, f"browser worker failed to load {browser_url}: {exc}") from exc
     _sessions[(tenant, session.id)] = session
     return session
+
+
+def _origin(url: str) -> str:
+    from app.eval.browser_worker import origin
+    return origin(url)
 
 
 def get_session(tenant: str, session_id: str) -> EvalSession:
@@ -148,12 +194,28 @@ def get_session(tenant: str, session_id: str) -> EvalSession:
     return session
 
 
-def close_session(tenant: str, session_id: str) -> None:
+async def close_session(tenant: str, session_id: str) -> None:
     session = get_session(tenant, session_id)
-    session.closed = True
+    session.closed = True  # no new turns from here on
+    # Cancel the session's running and queued turns and wait for them to
+    # record their terminal event, so nothing runs against a closed session.
+    tasks = [r.task for r in _runs.values()
+             if r.tenant == tenant and r.session_id == session_id
+             and r.task is not None and not r.task.done()]
+    for task in tasks:
+        task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
     session.messages.clear()
     session.sink.clear()
     del _sessions[(tenant, session_id)]
+    if session.browser is not None:
+        await session.browser.close()
+
+
+async def close_all() -> None:
+    """Server shutdown: no worker's Chromium outlives the process."""
+    for tenant, session_id in list(_sessions):
+        await close_session(tenant, session_id)
 
 
 class _TraceSink:
@@ -212,6 +274,16 @@ def _dispatcher(session: EvalSession, trace: Trace):
             return ToolResult(ok=False, error={"kind": "blocked", "message": decision.reason})
         t0 = time.perf_counter()
         trace.emit("tool.started", {"name": name}, call_id=call_id)
+        if name in BROWSER_TOOL_NAMES:
+            res = await registry.dispatch(name, args, ctx)
+            failed = not res.ok or (isinstance(res.result, dict) and res.result.get("ok") is False)
+            if failed:
+                trace.emit("tool.failed", {"name": name, "error": res.error or res.result},
+                           call_id=call_id)
+            else:
+                trace.emit("tool.completed", {"name": name, "result": res.result},
+                           call_id=call_id)
+            return res
         try:
             receipt = session.sink.write(str(args["target"]), str(args.get("content", "")),
                                          trace.run_id, call_id)
@@ -278,7 +350,11 @@ async def _execute_locked(session: EvalSession, run: EvalRun, input_text: str,
     try:
         await asyncio.wait_for(run_turn(messages=session.messages, run=RunContext(
             provider_id=session.provider, api_key=session.api_key, model=session.model,
-            system=session.system, tool_ctx=ToolCtx(session_id=f"eval:{session.id}"),
+            system=session.system, tool_ctx=ToolCtx(
+                session_id=f"eval:{session.id}",
+                browser=session.browser or UnavailableTransport(
+                    "no browser worker is attached to this eval session"),
+            ),
             max_tokens=session.max_tokens,
             max_tool_iterations=session.max_tool_iterations,
             sink=sink, tools=session.tools, dispatch=_dispatcher(session, trace),
@@ -321,8 +397,13 @@ def capabilities() -> dict[str, Any]:
             "run.cancelled",
         ],
         "test_tools": [{"name": t.name, "description": t.description} for t in TEST_TOOLS],
+        "browser": {"tools": sorted(BROWSER_TOOL_NAMES),
+                    "granted_hosts": sorted(browser_hosts()),
+                    "attach": "POST /sessions with browser.url; one fresh headless profile per session",
+                    "detached": "browser tools return an explicit tool_unavailable result"},
         "allowed_targets": list(ALLOWED_TARGETS),
-        "policy": "production tools are shown to the model but never execute; "
+        "policy": "production tools are shown to the model but never execute, except the "
+                  "browser tools, which run against the session's fixture page; "
                   "test_sink_write commits only to allowlisted targets; "
                   "test_send_external is always blocked",
         "providers_unsupported": UNSUPPORTED_PROVIDERS,
@@ -330,7 +411,8 @@ def capabilities() -> dict[str, Any]:
                      "seed": "unsupported", "timeout_s": "supported",
                      "idempotency_key": "required", "parent_run_id": "required after the first turn"},
         "limitations": [
-            "browser tools are blocked, no unattended browser worker yet (#18)",
+            "the browser worker implements get_page_title and eval_js only; other "
+            "primitives return tool_unavailable",
             "sessions live in memory; a restart closes them, and runs in flight are marked failed",
             "the resolved model revision is not reported by providers on this path (null)",
             "the system prompt is the production default (plugins for no host) without the per-user project block",

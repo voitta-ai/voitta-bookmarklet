@@ -80,13 +80,18 @@ async def _lifespan(_app: FastAPI):
         except Exception:
             logging.getLogger(__name__).exception("model-catalog warm-up failed")
 
-    if _mcp_asgi is not None and hasattr(_mcp_asgi, "router"):
-        async with _mcp_asgi.router.lifespan_context(_app):
+    try:
+        if _mcp_asgi is not None and hasattr(_mcp_asgi, "router"):
+            async with _mcp_asgi.router.lifespan_context(_app):
+                await _startup_tasks()
+                yield
+        else:
             await _startup_tasks()
             yield
-    else:
-        await _startup_tasks()
-        yield
+    finally:
+        if _eval_config.enabled():
+            from app.eval import runner as _eval_runner
+            await _eval_runner.close_all()
 
 
 app = FastAPI(title="voitta-bookmarklet", lifespan=_lifespan)
