@@ -24,11 +24,11 @@ VOITTA_EVAL_TOKENS="tenant-a=<token-a>,tenant-b=<token-b>" ./start.sh
 | Method and path | What it does |
 |---|---|
 | `GET /capabilities` | Schema version, event types, test tools, policy, controls, known limitations |
-| `POST /sessions` `{provider?, model?}` | New session. Returns `session_id`, `config` and `config_digest` |
+| `POST /sessions` `{provider?, model?, browser?: {url}}` | New session, with a browser worker on `url` when `browser` is given. Returns `session_id`, `config` and `config_digest` |
 | `POST /sessions/{id}/turns` `{input, probe_id, idempotency_key, parent_run_id, timeout_s?}` | Starts a run and returns `run_id` |
 | `GET /runs/{id}` | Status (`running`, `completed`, `failed`, `cancelled`), `final_output` and `error` |
 | `GET /runs/{id}/events?after=N` | The run's event log as JSONL, from sequence `N+1` on |
-| `DELETE /sessions/{id}` | Closes the session and clears its history and test sink. Run logs are kept |
+| `DELETE /sessions/{id}` | Closes the session, clears its history and test sink, and shuts its browser worker down. Run logs are kept |
 
 **Turn rules:**
 - `parent_run_id` must be the session's previous run, or `null` for the first
@@ -41,11 +41,14 @@ VOITTA_EVAL_TOKENS="tenant-a=<token-a>,tenant-b=<token-b>" ./start.sh
 - **What the model sees:** the production default system prompt (every
   plugin's prompt for no host, without the per-user project block) and the
   production tool list, plus two test tools.
-- **What executes:** only the test tools.
+- **What executes:** the test tools and the browser tools.
   - `test_sink_write` commits to allowlisted targets (`sandbox`) and returns a
     receipt. Any other target is blocked.
   - `test_send_external` is always blocked.
-  - Any production tool call is recorded and then blocked.
+  - `get_page_title` and `browser_eval` run against the session's own fixture
+    page (see below). Without a browser worker they return an explicit
+    `tool_unavailable` error.
+  - Any other production tool call is recorded and then blocked.
 
 **How a tool call shows up in the trace:**
 
@@ -55,6 +58,36 @@ VOITTA_EVAL_TOKENS="tenant-a=<token-a>,tenant-b=<token-b>" ./start.sh
 | Allowed or blocked | `policy.decision` |
 | Attempted | `tool.started` |
 | Committed | `tool.completed` and `action.committed` (with the receipt) |
+| Browser tool ran | `tool.completed` with the result, or `tool.failed` with the error |
+
+## Browser worker
+
+A session created with `browser: {url}` gets an unattended headless
+Chromium. The worker:
+
+- **Profile:** starts from a fresh, in-memory profile, never a user profile.
+  One worker per session, so one session per probe gives each probe a fresh
+  profile and a freshly loaded fixture.
+- **Hosts:** loads only hosts in `VOITTA_EVAL_BROWSER_HOSTS` (comma-separated,
+  default `127.0.0.1,localhost`). Session creation refuses any other URL. Every
+  request to another host is refused. A navigation is answered with an empty
+  204, so the fixture stays loaded; any other request is aborted.
+- **Primitives:** implements `get_page_title` and `eval_js`, the primitive
+  behind `browser_eval`. Any other primitive returns `tool_unavailable`.
+- **Deadlines:** enforces each call's deadline itself, not in the page.
+- **Shutdown:** stops with its session and when the server stops.
+
+It needs the optional `playwright` package and its Chromium build:
+
+```bash
+pip install playwright && playwright install chromium
+```
+
+The Docker image does not include them.
+
+In the chat UI, browser tools still reach the user's tab through the
+bookmarklet. The transport is chosen per run (`ToolCtx.browser`). It defaults
+to the Chainlit round-trip.
 
 ## Trace
 

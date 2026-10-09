@@ -44,6 +44,9 @@ class ToolCtx:
     # for per-user data isolation; see app.services.current_user.
     email: str | None = None
     extras: dict[str, Any] = field(default_factory=dict)
+    # How hybrid tools reach the page (app.tools.browser.BrowserTransport).
+    # None = the Chainlit round-trip to the user's bookmarklet.
+    browser: Any = None
 
 
 @dataclass

@@ -51,3 +51,11 @@ def tenant_dir(tenant: str) -> Path:
 def all_tenant_dirs() -> list[Path]:
     root = USER_DATA_ROOT / "eval"
     return [p for p in root.iterdir() if p.is_dir()] if root.is_dir() else []
+
+
+def browser_hosts() -> frozenset[str]:
+    """Hosts an eval browser worker may load, from
+    ``VOITTA_EVAL_BROWSER_HOSTS`` (comma-separated). Loopback only by default:
+    probes serve their own fixture pages."""
+    raw = os.environ.get("VOITTA_EVAL_BROWSER_HOSTS") or "127.0.0.1,localhost"
+    return frozenset(h.strip().lower() for h in raw.split(",") if h.strip())

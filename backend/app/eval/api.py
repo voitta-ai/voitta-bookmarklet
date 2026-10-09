@@ -30,9 +30,14 @@ def _call(fn, *args, **kwargs):
         raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
 
 
+class BrowserIn(BaseModel):
+    url: str
+
+
 class SessionIn(BaseModel):
     provider: str | None = None
     model: str | None = None
+    browser: BrowserIn | None = None
 
 
 class TurnIn(BaseModel):
@@ -50,7 +55,12 @@ async def capabilities(tenant: str = Depends(_tenant)) -> dict[str, Any]:
 
 @router.post("/sessions")
 async def create_session(body: SessionIn, tenant: str = Depends(_tenant)) -> dict[str, Any]:
-    session = _call(runner.create_session, tenant, body.provider, body.model)
+    try:
+        session = await runner.create_session(
+            tenant, body.provider, body.model, body.browser.url if body.browser else None,
+        )
+    except runner.EvalError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
     return {"session_id": session.id, "config_digest": session.config_digest,
             "config": session.config}
 
@@ -92,5 +102,8 @@ async def get_events(run_id: str, after: int = 0,
 
 @router.delete("/sessions/{session_id}")
 async def delete_session(session_id: str, tenant: str = Depends(_tenant)) -> dict[str, Any]:
-    _call(runner.close_session, tenant, session_id)
+    try:
+        await runner.close_session(tenant, session_id)
+    except runner.EvalError as exc:
+        raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
     return {"closed": session_id}
