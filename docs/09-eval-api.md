@@ -28,7 +28,7 @@ VOITTA_EVAL_TOKENS="tenant-a=<token-a>,tenant-b=<token-b>" ./start.sh
 | `POST /sessions/{id}/turns` `{input, probe_id, idempotency_key, parent_run_id, timeout_s?}` | Starts a run and returns `run_id` |
 | `GET /runs/{id}` | Status (`running`, `completed`, `failed`, `cancelled`), `final_output` and `error` |
 | `GET /runs/{id}/events?after=N` | The run's event log as JSONL, from sequence `N+1` on |
-| `DELETE /sessions/{id}` | Closes the session, clears its history and test sink, and shuts its browser worker down. Run logs are kept |
+| `DELETE /sessions/{id}` | Closes the session: cancels its running and queued turns (they end `run.cancelled`), clears its history and test sink, and shuts its browser worker down. Run logs are kept |
 
 **Turn rules:**
 - `parent_run_id` must be the session's previous run, or `null` for the first
@@ -68,13 +68,20 @@ Chromium. The worker:
 - **Profile:** starts from a fresh, in-memory profile, never a user profile.
   One worker per session, so one session per probe gives each probe a fresh
   profile and a freshly loaded fixture.
-- **Hosts:** loads only hosts in `VOITTA_EVAL_BROWSER_HOSTS` (comma-separated,
-  default `127.0.0.1,localhost`). Session creation refuses any other URL. Every
-  request to another host is refused. A navigation is answered with an empty
-  204, so the fixture stays loaded; any other request is aborted.
+- **Origin:** the fixture URL's host must be in `VOITTA_EVAL_BROWSER_HOSTS`
+  (comma-separated, default `127.0.0.1,localhost`), and the URL must not point
+  at this server. After that, the page may reach only the fixture's exact
+  origin (scheme, host and port). Every other request is refused, including
+  other ports on the same host. A navigation is answered with an empty 204, so
+  the fixture stays loaded; any other request is aborted. Service workers are
+  blocked. A redirect served by the fixture server itself is not checked, so
+  the fixture server should not redirect off-origin.
 - **Primitives:** implements `get_page_title` and `eval_js`, the primitive
   behind `browser_eval`. Any other primitive returns `tool_unavailable`.
-- **Deadlines:** enforces each call's deadline itself, not in the page.
+- **Deadlines:** enforces each call's deadline itself, not in the page. For
+  `browser_eval` the deadline is `await_ms`. When a deadline passes, the call
+  fails with `timeout`, and the page and profile are discarded and the fixture
+  is loaded fresh, so the script cannot keep running into later calls.
 - **Shutdown:** stops with its session and when the server stops.
 
 It needs the optional `playwright` package and its Chromium build:

@@ -90,7 +90,10 @@ _sessions: dict[tuple[str, str], EvalSession] = {}
 _runs: dict[tuple[str, str], EvalRun] = {}
 
 
-def _check_browser_url(url: str) -> None:
+_LOOPBACK = {"127.0.0.1", "localhost", "::1", "0.0.0.0"}
+
+
+def _check_browser_url(url: str, server: tuple[str, int] | None) -> None:
     parts = urlsplit(url)
     host = (parts.hostname or "").lower()
     if parts.scheme not in ("http", "https") or not host:
@@ -98,6 +101,13 @@ def _check_browser_url(url: str) -> None:
     if host not in browser_hosts():
         raise EvalError(400, f"browser host {host!r} is not granted "
                              f"(VOITTA_EVAL_BROWSER_HOSTS: {sorted(browser_hosts())})")
+    # The fixture's origin is the only one the page may reach. It must never
+    # be this server, or a script would get same-origin access to its API.
+    port = parts.port or {"http": 80, "https": 443}[parts.scheme]
+    if server is not None and port == server[1] and (
+        host in _LOOPBACK or host == str(server[0]).lower()
+    ):
+        raise EvalError(400, "browser.url must not point at this server")
     try:
         importlib.import_module("playwright")
     except ImportError as exc:
@@ -106,7 +116,8 @@ def _check_browser_url(url: str) -> None:
 
 
 async def create_session(tenant: str, provider: str | None, model: str | None,
-                         browser_url: str | None = None) -> EvalSession:
+                         browser_url: str | None = None,
+                         server: tuple[str, int] | None = None) -> EvalSession:
     # Same tool and plugin registration the chat UI gets.
     importlib.import_module("app.chainlit_app")
     from app.plugins import for_host
@@ -120,7 +131,7 @@ async def create_session(tenant: str, provider: str | None, model: str | None,
         raise EvalError(400, f"no credential configured for provider {provider!r}")
     model = model or (settings.get("models") or {}).get(provider) or default_model_for(provider)
     if browser_url is not None:
-        _check_browser_url(browser_url)
+        _check_browser_url(browser_url, server)
 
     # Production default prompt (plugins for no host), without the per-user
     # project block, which would leak the operator's live project into a probe.
@@ -146,7 +157,7 @@ async def create_session(tenant: str, provider: str | None, model: str | None,
         "tool_names": [t.name for t in tools],
         "executable_tools": sorted(TEST_TOOL_NAMES | BROWSER_TOOL_NAMES),
         "browser": {"attached": browser_url is not None,
-                    "host": urlsplit(browser_url).hostname if browser_url else None},
+                    "origin": _origin(browser_url) if browser_url else None},
         "allowed_targets": list(ALLOWED_TARGETS),
         "max_tokens": max_tokens,
         "max_tool_iterations": max_iters,
@@ -164,11 +175,16 @@ async def create_session(tenant: str, provider: str | None, model: str | None,
     if browser_url is not None:
         from app.eval.browser_worker import start_worker
         try:
-            session.browser = await start_worker(browser_url, browser_hosts())
+            session.browser = await start_worker(browser_url)
         except Exception as exc:
             raise EvalError(502, f"browser worker failed to load {browser_url}: {exc}") from exc
     _sessions[(tenant, session.id)] = session
     return session
+
+
+def _origin(url: str) -> str:
+    from app.eval.browser_worker import origin
+    return origin(url)
 
 
 def get_session(tenant: str, session_id: str) -> EvalSession:
@@ -180,7 +196,15 @@ def get_session(tenant: str, session_id: str) -> EvalSession:
 
 async def close_session(tenant: str, session_id: str) -> None:
     session = get_session(tenant, session_id)
-    session.closed = True
+    session.closed = True  # no new turns from here on
+    # Cancel the session's running and queued turns and wait for them to
+    # record their terminal event, so nothing runs against a closed session.
+    tasks = [r.task for r in _runs.values()
+             if r.tenant == tenant and r.session_id == session_id
+             and r.task is not None and not r.task.done()]
+    for task in tasks:
+        task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
     session.messages.clear()
     session.sink.clear()
     del _sessions[(tenant, session_id)]

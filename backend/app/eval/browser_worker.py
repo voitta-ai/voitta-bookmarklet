@@ -2,9 +2,12 @@
 
 One worker per eval session. It launches its own headless Chromium with a
 fresh, throwaway profile (never a user profile), loads the session's fixture
-page, and refuses every request to a host outside the session's grant, so a
-script run through it cannot navigate or fetch elsewhere. Deadlines are
-enforced here with ``asyncio.wait_for``, not by the page.
+page, and refuses every request outside the fixture's exact origin (scheme,
+host and port), so a script run through it cannot navigate or fetch
+elsewhere, including other services on the same host. Deadlines are enforced
+here, not by the page: when one passes, the page and its profile are thrown
+away and the fixture is loaded again, so a runaway script cannot outlive its
+call.
 
 Only the primitives the eval path needs are implemented natively
 (``get_page_title``, ``eval_js``); any other primitive fails with
@@ -24,9 +27,11 @@ from app.tools.browser import BrowserToolError
 logger = logging.getLogger(__name__)
 
 # Same contract as the bookmarklet's eval_js (frontend/src/lib/primitives.ts):
-# async IIFE via indirect eval, console captured, page-side await_ms race.
+# async IIFE via indirect eval, console captured. No page-side timeout race:
+# a race only stops waiting, the script keeps running. The worker enforces
+# await_ms itself and resets the page when it passes.
 _EVAL_JS = """
-async ([js, awaitMs]) => {
+async (js) => {
   const safe = (v) => { try { JSON.stringify(v); return v; }
                         catch { try { return String(v); } catch { return "[unstringifiable]"; } } };
   const logs = [];
@@ -39,10 +44,7 @@ async ([js, awaitMs]) => {
   const t0 = performance.now();
   try {
     const indirectEval = eval;
-    const result = await Promise.race([
-      Promise.resolve().then(() => indirectEval(`(async () => {\\n${js}\\n})()`)),
-      new Promise((_, rej) => setTimeout(() => rej(new Error(`eval timed out after ${awaitMs}ms`)), awaitMs)),
-    ]);
+    const result = await indirectEval(`(async () => {\\n${js}\\n})()`);
     return { ok: true, result: safe(result), logs, ms: Math.round(performance.now() - t0) };
   } catch (err) {
     return { ok: false, error: "eval_threw", message: err instanceof Error ? err.message : String(err),
@@ -58,13 +60,20 @@ def _host(url: str) -> str:
     return (urlsplit(url).hostname or "").lower()
 
 
+def origin(url: str) -> str:
+    """``scheme://host:port`` with the default port made explicit."""
+    parts = urlsplit(url)
+    port = parts.port or {"http": 80, "https": 443}.get(parts.scheme, 0)
+    return f"{parts.scheme}://{(parts.hostname or '').lower()}:{port}"
+
+
 class BrowserWorker:
-    def __init__(self, url: str, granted_hosts: frozenset[str]) -> None:
+    def __init__(self, url: str) -> None:
         self.url = url
-        self.host = _host(url)
-        self._granted = granted_hosts
+        self.origin = origin(url)
         self._pw: Any = None
         self._browser: Any = None
+        self._context: Any = None
         self._page: Any = None
         self.blocked: list[str] = []
 
@@ -74,19 +83,33 @@ class BrowserWorker:
         self._pw = await async_playwright().start()
         try:
             self._browser = await self._pw.chromium.launch(headless=True)
-            # new_context() is an in-memory, throwaway profile.
-            context = await self._browser.new_context()
-            await context.route("**/*", self._guard)
-            self._page = await context.new_page()
-            await self._page.goto(self.url, wait_until="load", timeout=15_000)
+            await self._load_fixture()
         except BaseException:
             await self.close()
             raise
 
+    async def _load_fixture(self) -> None:
+        # new_context() is an in-memory, throwaway profile. Service workers
+        # are blocked because their requests bypass the route guard.
+        self._context = await self._browser.new_context(service_workers="block")
+        await self._context.route("**/*", self._guard)
+        self._page = await self._context.new_page()
+        await self._page.goto(self.url, wait_until="load", timeout=15_000)
+
+    async def _reset(self) -> None:
+        """Drop the page and profile (stopping any script still running in
+        them) and load the fixture into a fresh one."""
+        old, self._context, self._page = self._context, None, None
+        try:
+            await old.close()
+        except Exception:
+            logger.exception("browser worker context close failed")
+        await self._load_fixture()
+
     async def _guard(self, route: Any) -> None:
         url = route.request.url
         scheme = urlsplit(url).scheme
-        if scheme in ("data", "blob", "about") or _host(url) in self._granted:
+        if scheme in ("data", "blob", "about") or origin(url) == self.origin:
             await route.continue_()
         else:
             self.blocked.append(url)
@@ -104,18 +127,24 @@ class BrowserWorker:
             op = self._page.title()
         elif name == "eval_js":
             js = str(args.get("js") or "")
-            await_ms = int(args.get("await_ms") or 30_000)
-            op = self._page.evaluate(_EVAL_JS, [js, await_ms])
+            timeout_ms = min(timeout_ms, int(args.get("await_ms") or 30_000))
+            op = self._page.evaluate(_EVAL_JS, js)
         else:
             raise BrowserToolError(
                 "tool_unavailable",
                 f"browser primitive {name!r} is not supported by the eval worker",
             )
+        task = asyncio.ensure_future(op)
         try:
-            res = await asyncio.wait_for(op, timeout=timeout_ms / 1000)
+            res = await asyncio.wait_for(asyncio.shield(task), timeout=timeout_ms / 1000)
         except asyncio.TimeoutError as exc:
+            # The script may still be running in the page: throw the page away.
+            task.add_done_callback(lambda t: t.cancelled() or t.exception())
+            await self._reset()
             raise BrowserToolError(
-                "timeout", f"browser primitive {name!r} gave no result within {timeout_ms}ms",
+                "timeout",
+                f"browser primitive {name!r} gave no result within {timeout_ms}ms; "
+                "the page was reset to a fresh copy of the fixture",
             ) from exc
         except BrowserToolError:
             raise
@@ -124,6 +153,7 @@ class BrowserWorker:
         return {"title": res} if name == "get_page_title" else res
 
     async def close(self) -> None:
+        self._context = None
         for obj in (self._browser, self._pw):
             if obj is None:
                 continue
@@ -134,7 +164,7 @@ class BrowserWorker:
         self._page = self._browser = self._pw = None
 
 
-async def start_worker(url: str, granted_hosts: frozenset[str]) -> BrowserWorker:
-    worker = BrowserWorker(url, granted_hosts)
+async def start_worker(url: str) -> BrowserWorker:
+    worker = BrowserWorker(url)
     await worker.start()
     return worker

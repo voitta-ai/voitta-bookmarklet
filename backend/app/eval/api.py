@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Response
+from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 from pydantic import BaseModel
 
 from app.eval import runner
@@ -54,10 +54,12 @@ async def capabilities(tenant: str = Depends(_tenant)) -> dict[str, Any]:
 
 
 @router.post("/sessions")
-async def create_session(body: SessionIn, tenant: str = Depends(_tenant)) -> dict[str, Any]:
+async def create_session(body: SessionIn, request: Request,
+                         tenant: str = Depends(_tenant)) -> dict[str, Any]:
     try:
         session = await runner.create_session(
             tenant, body.provider, body.model, body.browser.url if body.browser else None,
+            server=request.scope.get("server"),
         )
     except runner.EvalError as exc:
         raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
