@@ -80,13 +80,22 @@ class TurnSink(Protocol):
     bubble (the next delta starts a new one). Each tool call is opened
     with :meth:`tool_start`, which returns an opaque handle passed back to
     :meth:`tool_input_delta` and :meth:`tool_end`.
+
+    ``origin`` says who executed a tool call. ``"dispatch"``: this process
+    ran it through the registry (or the run's own dispatcher), so our
+    policy applied. ``"engine"``: the Claude Code engine ran it itself (a
+    built-in such as Bash); we see the call and its result in the stream
+    but never executed it. ``parent`` is set for a call made inside an
+    engine subagent: the id of the tool call that spawned it.
     """
 
     async def text_delta(self, text: str) -> None: ...
 
     async def text_end(self) -> None: ...
 
-    async def tool_start(self, name: str) -> Any: ...
+    async def tool_start(
+        self, name: str, *, origin: str = "dispatch", parent: str | None = None,
+    ) -> Any: ...
 
     async def tool_input_delta(self, handle: Any, text: str) -> None: ...
 
@@ -110,12 +119,17 @@ class TurnSink(Protocol):
         """The provider call finished with this stop reason and usage."""
         ...
 
+    async def status(self, text: str | None) -> None:
+        """A live one-line progress indicator; ``None`` removes it."""
+        ...
+
 
 class ChainlitSink:
     """Renders a turn as Chainlit messages and steps (the chat UI)."""
 
     def __init__(self) -> None:
         self._msg: cl.Message | None = None
+        self._status: cl.Step | None = None
 
     async def text_delta(self, text: str) -> None:
         if not text:
@@ -131,7 +145,9 @@ class ChainlitSink:
             await self._msg.update()
             self._msg = None
 
-    async def tool_start(self, name: str) -> cl.Step:
+    async def tool_start(
+        self, name: str, *, origin: str = "dispatch", parent: str | None = None,
+    ) -> cl.Step:
         step = cl.Step(name=name, type="tool")
         step.input = ""
         await step.send()
@@ -174,6 +190,20 @@ class ChainlitSink:
 
     async def model_stop(self, stop_reason: str, usage: Any) -> None:
         pass
+
+    async def status(self, text: str | None) -> None:
+        if text is None:
+            if self._status is not None:
+                await self._status.remove()
+                self._status = None
+            return
+        if self._status is None:
+            self._status = cl.Step(name="Claude Code", type="run")
+            self._status.output = text
+            await self._status.send()
+        else:
+            self._status.output = text
+            await self._status.update()
 
 
 # (name, args, ctx, tool_use_id) -> result. The default is registry.dispatch.

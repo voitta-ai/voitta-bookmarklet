@@ -1,4 +1,4 @@
-"""Drive one Claude Agent SDK turn and map its events to Chainlit primitives.
+"""Drive one Claude Agent SDK turn and emit its events through a ``TurnSink``.
 
 Each user turn is a single ``query()`` call against the Claude Code engine.
 Multi-turn continuity is ``resume=<session_id>`` (continue-only — no fork),
@@ -21,12 +21,10 @@ import logging
 import os
 import re
 import time
-from collections.abc import AsyncIterator
+import json
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from typing import Any
-
-import chainlit as cl
-from chainlit.context import context_var as cl_context_var, get_context as cl_get_context
 
 # The Claude Agent SDK is installed at runtime by app.installer (like the other
 # heavy LLM deps), so it may be absent at module-import time on a fresh launch.
@@ -68,6 +66,7 @@ from app.services.agent_sdk.config import (
     subprocess_env,
     workspace_dir,
 )
+from app.agent import TurnSink
 from app.services.agent_sdk.errors import AgentSdkAuthError, AgentSdkError, AgentSdkUnavailable
 from app.tools.registry import ToolCtx
 
@@ -92,6 +91,24 @@ _AUTH_HINTS = (
 class TurnResult:
     session_id: str | None
     is_error: bool = False
+
+
+@dataclass(frozen=True)
+class SdkRunContext:
+    """Everything one subscription-brain turn depends on, resolved by the caller.
+
+    The SDK keeps its own tool loop and session store, so this carries what
+    the engine needs instead of the API loop's provider, key and limits.
+    ``on_session_id`` is called as soon as the engine announces the session
+    id (at turn start, before the result), so the chat UI can latch it.
+    """
+
+    system: str
+    model: str | None
+    resume_session_id: str | None
+    tool_ctx: ToolCtx
+    sink: TurnSink
+    on_session_id: Callable[[str], None] | None = None
 
 
 # Optional wall-clock ceiling for one brain turn, in seconds. Off by default:
@@ -274,16 +291,17 @@ def _build_options(
 async def run_agent_sdk_turn(
     *,
     user_text: str,
-    system: str,
-    model: str | None,
-    resume_session_id: str | None,
-    ctx: ToolCtx,
+    run: SdkRunContext,
     image_blocks: list[dict[str, Any]] | None = None,
 ) -> TurnResult:
-    """Run one turn; stream output to Chainlit; return the session id.
+    """Run one turn; emit its output through ``run.sink``; return the session id.
 
     ``image_blocks``: attached images as Anthropic base64 image blocks,
     sent inline in the user message (API-flow parity — instant vision).
+
+    Every tool call the engine reports reaches the sink, including ones our
+    callback never sees: engine built-ins go out with ``origin="engine"`` and
+    calls made inside a subagent carry ``parent`` (the spawning call's id).
 
     Raises :class:`AgentSdkUnavailable` if the engine isn't installed and
     :class:`AgentSdkAuthError` if the subscription token is missing/expired/
@@ -293,20 +311,18 @@ async def run_agent_sdk_turn(
     if query is None:
         raise AgentSdkUnavailable("claude-agent-sdk is not installed")
 
-    # ask_user_question plumbing (app.tools.server.ask_user). The tool runs in
-    # an SDK-spawned task where Chainlit's contextvar is not guaranteed, so the
-    # context captured here rides along in ``ctx.extras`` for it to re-bind;
+    ctx = run.tool_ctx
+    sink = run.sink
+    model = run.model
+    resume_session_id = run.resume_session_id
+    # ask_user_question plumbing (app.tools.server.ask_user). The caller puts
+    # its UI context in ``ctx.extras`` (the tool runs in an SDK-spawned task);
     # ``wait_state`` flips the ticker to its "waiting" face; ``deadline`` is a
     # one-slot cell for the asyncio.Timeout (filled once the turn starts, read
     # only when a question is asked) so the handler can push the turn ceiling
     # out around a human-paced wait and restore it after.
-    try:
-        cl_ctx: Any = cl_get_context()
-    except Exception:
-        cl_ctx = None
     wait_state: dict[str, bool] = {"asking": False}
     deadline: list[Any] = [None]
-    ctx.extras["ask_user.cl_ctx"] = cl_ctx
     ctx.extras["ask_user.wait_state"] = wait_state
     ctx.extras["ask_user.deadline"] = deadline
     ctx.extras["ask_user.turn_timeout_s"] = _TURN_TIMEOUT_S
@@ -314,29 +330,25 @@ async def run_agent_sdk_turn(
     # `claude --version` once, so off the event loop.
     engine = await asyncio.to_thread(engine_cli_path)
     options = _build_options(
-        system=system, model=model, resume=resume_session_id, ctx=ctx,
+        system=run.system, model=model, resume=resume_session_id, ctx=ctx,
         can_use_tool=_make_can_use_tool(), cli_path=engine,
     )
 
-    streaming_msg: cl.Message | None = None
-    steps: dict[str, cl.Step] = {}
+    steps: dict[str, Any] = {}
     session_id: str | None = resume_session_id
     result_msg: ResultMessage | None = None
     # Live telemetry: the loop mutates `t` (plain assignments), the ticker
-    # renders it — single writer on the status step is preserved.
+    # renders it — single writer on the status line is preserved.
     from app.services.agent_sdk.turn_status import TurnStatus
 
     t = TurnStatus()
 
-    # One slick, self-animating status line — the only "busy" element. A
-    # background ticker spins it and ticks the elapsed/token counters once a
-    # second, so the turn stays lively even during the silent thinking gaps
-    # between events. It owns the status step exclusively (the main loop only
-    # mutates `tokens`), so there's no second writer and no pile of brown
-    # half-updated lines. Removed entirely when the turn ends — no footer.
-    status = cl.Step(name="Claude Code", type="run")
-    status.output = "⠋ Working…"
-    await status.send()
+    # One self-animating status line — the only "busy" element. A background
+    # ticker spins it and ticks the elapsed/token counters once a second, so
+    # the turn stays lively even during the silent thinking gaps between
+    # events. It is the status line's only writer (the main loop only mutates
+    # `t`). Removed entirely when the turn ends — no footer.
+    await sink.status("⠋ Working…")
 
     _SPIN = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
     t0 = time.monotonic()
@@ -345,18 +357,11 @@ async def run_agent_sdk_turn(
         i = 0
         try:
             while True:
-                status.output = t.line(_SPIN[i % len(_SPIN)], wait_state["asking"])
-                await status.update()
+                await sink.status(t.line(_SPIN[i % len(_SPIN)], wait_state["asking"]))
                 i += 1
                 await asyncio.sleep(1)
         except asyncio.CancelledError:
             pass
-
-    async def _flush_text() -> None:
-        nonlocal streaming_msg
-        if streaming_msg is not None:
-            await streaming_msg.update()
-            streaming_msg = None
 
     ticker = asyncio.create_task(_ticker())
     # Hold the generator explicitly so we can guarantee it's closed on every
@@ -402,27 +407,27 @@ async def run_agent_sdk_turn(
                             # the final answer. Each contiguous run is its own
                             # bubble; a tool call closes the current bubble so the
                             # next run starts fresh (nothing is merged or eaten).
-                            if not block.text:
-                                continue
-                            if streaming_msg is None:
-                                streaming_msg = cl.Message(content="")
-                                await streaming_msg.send()
-                            await streaming_msg.stream_token(block.text)
+                            await sink.text_delta(block.text)
                         elif isinstance(block, ThinkingBlock):
                             # Reasoning isn't shown (summarised/omitted by
                             # default); the ticker already conveys "busy".
                             continue
                         elif isinstance(block, ToolUseBlock):
-                            await _flush_text()
-                            name = (block.name or "").removeprefix(f"mcp__{MCP_SERVER_NAME}__")
+                            await sink.text_end()
+                            raw = block.name or ""
+                            prefix = f"mcp__{MCP_SERVER_NAME}__"
+                            name = raw.removeprefix(prefix)
                             t.on_tool_start(name or "tool")
-                            step = cl.Step(name=name or "tool", type="tool")
+                            step = await sink.tool_start(
+                                name or "tool",
+                                origin="dispatch" if raw.startswith(prefix) else "engine",
+                                parent=getattr(message, "parent_tool_use_id", None),
+                            )
                             try:
-                                import json as _json
-                                step.input = _truncate(_json.dumps(block.input, ensure_ascii=False, default=str))
+                                args = json.dumps(block.input, ensure_ascii=False, default=str)
                             except Exception:
-                                step.input = str(block.input)
-                            await step.send()
+                                args = str(block.input)
+                            await sink.tool_input_delta(step, _truncate(args))
                             steps[block.id] = step
                 elif isinstance(message, UserMessage):
                     # Tool results the engine fed back — attach to their steps.
@@ -433,25 +438,25 @@ async def run_agent_sdk_turn(
                             t.on_tool_result()
                             step = steps.get(block.tool_use_id)
                             if step is not None:
-                                step.output = _truncate(_tool_result_text(block.content))
-                                if block.is_error:
-                                    step.is_error = True
-                                await step.update()
+                                await sink.tool_end(
+                                    step, _truncate(_tool_result_text(block.content)),
+                                    bool(block.is_error), [],
+                                )
                 elif isinstance(message, SystemMessage):
                     # The engine's init event announces the session id at turn
-                    # START. Latch it as the user's active session right away so
-                    # the history dropdown can title an in-flight conversation —
-                    # waiting for the ResultMessage meant multi-minute first
-                    # turns showed the default label the whole time.
+                    # START. Hand it to the caller right away so the history
+                    # dropdown can title an in-flight conversation — waiting for
+                    # the ResultMessage meant multi-minute first turns showed
+                    # the default label the whole time.
                     sid = (getattr(message, "data", None) or {}).get("session_id")
                     if sid and sid != session_id:
                         session_id = sid
                         logger.info("agent_sdk turn: session id %s", sid)
-                        try:
-                            from app.services.agent_sdk.selection import set_active
-                            set_active(ctx.email, sid)
-                        except Exception:
-                            logger.exception("set_active at init failed")
+                        if run.on_session_id is not None:
+                            try:
+                                run.on_session_id(sid)
+                            except Exception:
+                                logger.exception("on_session_id at init failed")
                 elif isinstance(message, ResultMessage):
                     result_msg = message
                     if message.session_id:
@@ -462,7 +467,7 @@ async def run_agent_sdk_turn(
     except (TimeoutError, asyncio.TimeoutError):
         # Turn exceeded the wall-clock ceiling — treat as a clean, non-fatal end
         # rather than a crash. The finally block closes the generator (killing
-        # the engine subprocess); we surface a message below and keep the session
+        # the engine subprocess); we surface a notice below and keep the session
         # id so the user can continue.
         timed_out = True
         logger.warning("agent_sdk turn timed out after %.0fs", _TURN_TIMEOUT_S)
@@ -493,12 +498,14 @@ async def run_agent_sdk_turn(
         ticker.cancel()
         try:
             await ticker
-        except Exception:
+        except (asyncio.CancelledError, Exception):
+            # Cancelled before its first tick (a turn that ends at once)
+            # raises CancelledError here rather than inside the ticker.
             pass
-        await _flush_text()
+        await sink.text_end()
         # The status line is pure entertainment — drop it when the turn ends.
         try:
-            await status.remove()
+            await sink.status(None)
         except Exception:
             pass
 
@@ -508,14 +515,12 @@ async def run_agent_sdk_turn(
         t.summary() or "no telemetry",
     )
     if timed_out:
-        await cl.Message(
-            content=(
-                f"⏱️ This turn hit the configured limit of "
-                f"{_TURN_TIMEOUT_S:.0f} s (VOITTA_BRAIN_TURN_TIMEOUT_S) and was "
-                "stopped. Send another message to continue — the conversation "
-                "is preserved."
-            ),
-        ).send()
+        await sink.notice(
+            f"⏱️ This turn hit the configured limit of "
+            f"{_TURN_TIMEOUT_S:.0f} s (VOITTA_BRAIN_TURN_TIMEOUT_S) and was "
+            "stopped. Send another message to continue — the conversation "
+            "is preserved."
+        )
         return TurnResult(session_id=session_id, is_error=True)
 
     return TurnResult(session_id=session_id, is_error=False)

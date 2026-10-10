@@ -505,6 +505,7 @@ async def _run_agent_sdk_turn(
     from app.services.agent_sdk import (
         AgentSdkAuthError,
         AgentSdkUnavailable,
+        SdkRunContext,
         run_agent_sdk_turn,
     )
     from app.services.agent_sdk.onboarding import handle_auth_error
@@ -549,6 +550,14 @@ async def _run_agent_sdk_turn(
         session_id = None
 
     ctx = ToolCtx(session_id=session_id, host=host, email=email)
+    # ask_user_question runs in an SDK-spawned task where Chainlit's
+    # contextvar is not guaranteed; it re-binds the context captured here.
+    from chainlit.context import get_context as cl_get_context
+
+    try:
+        ctx.extras["ask_user.cl_ctx"] = cl_get_context()
+    except Exception:
+        pass
     model = (settings.get("models") or {}).get("claude_code")
 
     # A history-dropdown pick (resume an existing session, or start fresh)
@@ -560,15 +569,18 @@ async def _run_agent_sdk_turn(
     if selected:
         cl.user_session.set("agent_sdk_session_id", picked_id)
     resume_id = cl.user_session.get("agent_sdk_session_id")
+    run = SdkRunContext(
+        system=system,
+        model=model,
+        resume_session_id=resume_id,
+        tool_ctx=ctx,
+        sink=ChainlitSink(),
+        on_session_id=lambda sid: set_active(email, sid),
+    )
 
     try:
         result = await run_agent_sdk_turn(
-            user_text=user_text,
-            system=system,
-            model=model,
-            resume_session_id=resume_id,
-            ctx=ctx,
-            image_blocks=image_blocks or None,
+            user_text=user_text, run=run, image_blocks=image_blocks or None,
         )
         if result.session_id:
             cl.user_session.set("agent_sdk_session_id", result.session_id)
@@ -585,12 +597,7 @@ async def _run_agent_sdk_turn(
         # Hand off to the in-chat token-onboarding flow. On success it resumes
         # the original turn; on cancel it returns without sending.
         await handle_auth_error(
-            user_text=user_text,
-            system=system,
-            model=model,
-            resume_session_id=resume_id,
-            ctx=ctx,
-            image_blocks=image_blocks or None,
+            user_text=user_text, run=run, image_blocks=image_blocks or None,
         )
     except Exception as exc:  # surface, don't crash the socket
         logger.exception("agent_sdk turn failed")
