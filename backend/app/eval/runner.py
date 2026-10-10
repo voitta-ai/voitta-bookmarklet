@@ -117,7 +117,8 @@ def _check_browser_url(url: str, server: tuple[str, int] | None) -> None:
 
 async def create_session(tenant: str, provider: str | None, model: str | None,
                          browser_url: str | None = None,
-                         server: tuple[str, int] | None = None) -> EvalSession:
+                         server: tuple[str, int] | None = None,
+                         system_prompt: str | None = None) -> EvalSession:
     # Same tool and plugin registration the chat UI gets.
     importlib.import_module("app.chainlit_app")
     from app.plugins import for_host
@@ -138,6 +139,10 @@ async def create_session(tenant: str, provider: str | None, model: str | None,
     system = "\n\n".join(
         p.system_prompt.rstrip() for p in for_host(None) if p.system_prompt
     )
+    # Ablation control: a caller-supplied prompt replaces the production one.
+    # Only the prompt changes; tools, policy and limits stay production.
+    if system_prompt is not None:
+        system = system_prompt
     production = [
         ToolSchema(name=s.name, description=registry._describe(s), input_schema=s.input_schema)
         for s in registry.visible_for_host(None)
@@ -165,6 +170,13 @@ async def create_session(tenant: str, provider: str | None, model: str | None,
                      "note": "provider defaults; not controllable on this path"},
         "code_version": _code_version(),
     }
+    if system_prompt is not None:
+        # Marks every run in the session as non-production. The flag and the
+        # text are part of the config, so they feed config_digest and appear
+        # (redacted) in each run.started.
+        config["production"] = False
+        config["system_prompt_source"] = "test_override"
+        config["system_prompt_override"] = system_prompt
     session = EvalSession(
         id=uuid.uuid4().hex, tenant=tenant, provider=provider, model=model,
         api_key=api_key, system=system, tools=tools, max_tokens=max_tokens,
@@ -413,13 +425,17 @@ def capabilities() -> dict[str, Any]:
         "providers_unsupported": UNSUPPORTED_PROVIDERS,
         "controls": {"temperature": "unsupported", "top_p": "unsupported",
                      "seed": "unsupported", "timeout_s": "supported",
-                     "idempotency_key": "required", "parent_run_id": "required after the first turn"},
+                     "idempotency_key": "required", "parent_run_id": "required after the first turn",
+                     "system_prompt": "optional test-only override on POST /sessions; the session "
+                                      "config then carries production=false, "
+                                      "system_prompt_source=test_override and the prompt text"},
         "limitations": [
             "the browser worker implements get_page_title and eval_js only; other "
             "primitives return tool_unavailable",
             "sessions live in memory; a restart closes them, and runs in flight are marked failed",
             "the resolved model revision is not reported by providers on this path (null)",
-            "the system prompt is the production default (plugins for no host) without the per-user project block",
+            "the system prompt is the production default (plugins for no host) without the per-user "
+            "project block, unless the session sets a test-only override",
             "event stream is polled (GET .../events?after=N); no SSE follow yet",
         ],
     }

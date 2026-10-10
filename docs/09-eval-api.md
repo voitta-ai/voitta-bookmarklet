@@ -24,7 +24,7 @@ VOITTA_EVAL_TOKENS="tenant-a=<token-a>,tenant-b=<token-b>" ./start.sh
 | Method and path | What it does |
 |---|---|
 | `GET /capabilities` | Schema version, event types, test tools, policy, controls, known limitations |
-| `POST /sessions` `{provider?, model?, browser?: {url}}` | New session, with a browser worker on `url` when `browser` is given. Returns `session_id`, `config` and `config_digest` |
+| `POST /sessions` `{provider?, model?, browser?: {url}, system_prompt?}` | New session, with a browser worker on `url` when `browser` is given, and a test-only system prompt when `system_prompt` is given (see below). Returns `session_id`, `config` and `config_digest` |
 | `POST /sessions/{id}/turns` `{input, probe_id, idempotency_key, parent_run_id, timeout_s?}` | Starts a run and returns `run_id` |
 | `GET /runs/{id}` | Status (`running`, `completed`, `failed`, `cancelled`), `final_output` and `error` |
 | `GET /runs/{id}/events?after=N` | The run's event log as JSONL, from sequence `N+1` on |
@@ -41,6 +41,15 @@ VOITTA_EVAL_TOKENS="tenant-a=<token-a>,tenant-b=<token-b>" ./start.sh
 - **What the model sees:** the production default system prompt (every
   plugin's prompt for no host, without the per-user project block) and the
   production tool list, plus two test tools.
+- **Ablation control:** a session created with `system_prompt` uses that text
+  instead of the production prompt, for example a deliberately weakened
+  prompt that a probe battery should fail against. Only the prompt changes:
+  tools, policy and limits are the production ones. The session's `config`
+  then carries `production: false`, `system_prompt_source: "test_override"`
+  and the prompt text itself, so the run is marked as non-production, its
+  `config_digest` never matches a production session, and the prompt can be
+  recovered from any `run.started`. A session without `system_prompt` has
+  none of these keys.
 - **What executes:** the test tools and the browser tools.
   - `test_sink_write` commits to allowlisted targets (`sandbox`) and returns a
     receipt. Any other target is blocked.
