@@ -171,12 +171,12 @@ async def create_session(tenant: str, provider: str | None, model: str | None,
         "code_version": _code_version(),
     }
     if system_prompt is not None:
-        # Marks every run in the session as non-production. The flag and the
-        # text are part of the config, so they feed config_digest and appear
-        # (redacted) in each run.started.
+        # Marks every run in the session as non-production. The flag feeds
+        # config_digest; the prompt is in it only by hash, so the digest stays
+        # recomputable from the trace even when redaction rewrites the text
+        # (the text itself goes into each run.started, redacted like input).
         config["production"] = False
         config["system_prompt_source"] = "test_override"
-        config["system_prompt_override"] = system_prompt
     session = EvalSession(
         id=uuid.uuid4().hex, tenant=tenant, provider=provider, model=model,
         api_key=api_key, system=system, tools=tools, max_tokens=max_tokens,
@@ -327,7 +327,8 @@ async def start_turn(
     run_id = uuid.uuid4().hex
     runs_dir = tenant_dir(session.tenant) / "runs"
     redactor = Redactor([session.api_key])
-    trace = Trace(runs_dir, run_id, session.id, probe_id, session.config_digest, redactor)
+    trace = Trace(runs_dir, run_id, session.id, probe_id, session.config_digest, redactor,
+                  production=session.config.get("production", True))
     run = EvalRun(id=run_id, session_id=session.id, tenant=session.tenant, trace=trace)
     _runs[(session.tenant, run_id)] = run
     session.idempotency[idempotency_key] = run_id
@@ -357,8 +358,11 @@ async def _execute(session: EvalSession, run: EvalRun, input_text: str,
 async def _execute_locked(session: EvalSession, run: EvalRun, input_text: str,
                           parent_run_id: str | None, timeout_s: int) -> None:
     trace = run.trace
-    trace.emit("run.started", {"input": input_text, "parent_run_id": parent_run_id,
-                               "config": session.config, "timeout_s": timeout_s})
+    started = {"input": input_text, "parent_run_id": parent_run_id,
+               "config": session.config, "timeout_s": timeout_s}
+    if session.config.get("system_prompt_source") == "test_override":
+        started["system_prompt_override"] = session.system
+    trace.emit("run.started", started)
     snapshot = len(session.messages)
     session.messages.append(LlmMessage(role="user",
                                        content=[{"type": "text", "text": input_text}]))
@@ -427,8 +431,10 @@ def capabilities() -> dict[str, Any]:
                      "seed": "unsupported", "timeout_s": "supported",
                      "idempotency_key": "required", "parent_run_id": "required after the first turn",
                      "system_prompt": "optional test-only override on POST /sessions; the session "
-                                      "config then carries production=false, "
-                                      "system_prompt_source=test_override and the prompt text"},
+                                      "config then carries production=false and "
+                                      "system_prompt_source=test_override, run status carries "
+                                      "production=false, and each run.started carries the "
+                                      "prompt text (redacted)"},
         "limitations": [
             "the browser worker implements get_page_title and eval_js only; other "
             "primitives return tool_unavailable",

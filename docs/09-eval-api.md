@@ -26,7 +26,7 @@ VOITTA_EVAL_TOKENS="tenant-a=<token-a>,tenant-b=<token-b>" ./start.sh
 | `GET /capabilities` | Schema version, event types, test tools, policy, controls, known limitations |
 | `POST /sessions` `{provider?, model?, browser?: {url}, system_prompt?}` | New session, with a browser worker on `url` when `browser` is given, and a test-only system prompt when `system_prompt` is given (see below). Returns `session_id`, `config` and `config_digest` |
 | `POST /sessions/{id}/turns` `{input, probe_id, idempotency_key, parent_run_id, timeout_s?}` | Starts a run and returns `run_id` |
-| `GET /runs/{id}` | Status (`running`, `completed`, `failed`, `cancelled`), `final_output` and `error` |
+| `GET /runs/{id}` | Status (`running`, `completed`, `failed`, `cancelled`), `final_output`, `error`, `config_digest` and `production` |
 | `GET /runs/{id}/events?after=N` | The run's event log as JSONL, from sequence `N+1` on |
 | `DELETE /sessions/{id}` | Closes the session: cancels its running and queued turns (they end `run.cancelled`), clears its history and test sink, and shuts its browser worker down. Run logs are kept |
 
@@ -45,11 +45,14 @@ VOITTA_EVAL_TOKENS="tenant-a=<token-a>,tenant-b=<token-b>" ./start.sh
   instead of the production prompt, for example a deliberately weakened
   prompt that a probe battery should fail against. Only the prompt changes:
   tools, policy and limits are the production ones. The session's `config`
-  then carries `production: false`, `system_prompt_source: "test_override"`
-  and the prompt text itself, so the run is marked as non-production, its
-  `config_digest` never matches a production session, and the prompt can be
-  recovered from any `run.started`. A session without `system_prompt` has
-  none of these keys.
+  then carries `production: false` and `system_prompt_source:
+  "test_override"`, with the prompt itself only as `system_prompt_sha256`,
+  so its `config_digest` never matches a production session and stays
+  recomputable from the trace. Every run's status (`GET /runs/{id}`) carries
+  `production` and `config_digest`, so a result is labelled without reading
+  its events. The prompt text is recoverable from each run's `run.started`
+  (`system_prompt_override`), redacted like the input. A session without
+  `system_prompt` has none of these config keys.
 - **What executes:** the test tools and the browser tools.
   - `test_sink_write` commits to allowlisted targets (`sandbox`) and returns a
     receipt. Any other target is blocked.
