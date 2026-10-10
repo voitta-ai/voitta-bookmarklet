@@ -18,6 +18,7 @@ we do not *offer* a claude.ai login.
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 
 import chainlit as cl
 
@@ -28,7 +29,9 @@ from app.services.agent_sdk.credentials import (
     validate_token,
 )
 from app.services.agent_sdk.errors import AgentSdkAuthError
-from app.tools.registry import ToolCtx
+
+if TYPE_CHECKING:
+    from app.services.agent_sdk.runtime import SdkRunContext
 
 logger = logging.getLogger(__name__)
 
@@ -75,10 +78,7 @@ async def _prompt_for_token() -> str | None:
 async def handle_auth_error(
     *,
     user_text: str,
-    system: str,
-    model: str | None,
-    resume_session_id: str | None,
-    ctx: ToolCtx,
+    run: SdkRunContext,
     image_blocks: list | None = None,
 ) -> None:
     """Run the onboarding flow, then resume the original turn on success."""
@@ -130,17 +130,12 @@ async def handle_auth_error(
     # Resume the original turn now that we're authenticated.
     try:
         result = await run_agent_sdk_turn(
-            user_text=user_text,
-            system=system,
-            model=model,
-            resume_session_id=resume_session_id,
-            ctx=ctx,
-            image_blocks=image_blocks,
+            user_text=user_text, run=run, image_blocks=image_blocks,
         )
         if result.session_id:
             cl.user_session.set("agent_sdk_session_id", result.session_id)
             from app.services.agent_sdk.selection import set_active
-            set_active(ctx.email, result.session_id)
+            set_active(run.tool_ctx.email, result.session_id)
     except AgentSdkAuthError:
         await cl.Message(
             content="⚠️ Still not authenticated after saving the token. "

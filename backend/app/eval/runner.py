@@ -236,7 +236,8 @@ class _TraceSink:
             self.outputs.append(text)
             self._trace.emit("assistant.output", {"kind": "text", "text": text})
 
-    async def tool_start(self, name: str) -> Any:
+    async def tool_start(self, name: str, *, origin: str = "dispatch",
+                         parent: str | None = None) -> Any:
         return name
 
     async def tool_input_delta(self, handle: Any, text: str) -> None:
@@ -262,6 +263,9 @@ class _TraceSink:
         self._trace.emit("model.response", {"stop_reason": stop_reason,
                                             "usage": getattr(usage, "__dict__", usage),
                                             "model_resolved": None})
+
+    async def status(self, text: str | None) -> None:
+        pass
 
 
 def _dispatcher(session: EvalSession, trace: Trace):

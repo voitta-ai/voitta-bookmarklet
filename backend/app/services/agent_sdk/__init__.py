@@ -9,7 +9,7 @@ Public surface:
 
 * :data:`BRAIN_PROVIDER` / :data:`BRAIN_LABEL` — selector value + display name.
 * :func:`is_available` — is the Claude Code engine installed? (gating)
-* :func:`run_agent_sdk_turn` — drive one turn, stream to Chainlit.
+* :func:`run_agent_sdk_turn` / :class:`SdkRunContext` — drive one turn, emit through a ``TurnSink``.
 * :func:`list_brain_sessions` / :func:`get_brain_transcript` — history dropdown.
 * :class:`AgentSdkAuthError` / :class:`AgentSdkUnavailable` — control-flow errors.
 """
@@ -27,7 +27,7 @@ from app.services.agent_sdk.errors import (
     AgentSdkError,
     AgentSdkUnavailable,
 )
-from app.services.agent_sdk.runtime import TurnResult, run_agent_sdk_turn
+from app.services.agent_sdk.runtime import SdkRunContext, TurnResult, run_agent_sdk_turn
 from app.services.agent_sdk.sessions import (
     get_brain_session_info,
     get_brain_transcript,
@@ -38,6 +38,7 @@ __all__ = [
     "BRAIN_LABEL",
     "BRAIN_PROVIDER",
     "DEFAULT_MODEL",
+    "SdkRunContext",
     "TurnResult",
     "AgentSdkAuthError",
     "AgentSdkError",
