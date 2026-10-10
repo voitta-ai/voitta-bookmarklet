@@ -117,7 +117,8 @@ def _check_browser_url(url: str, server: tuple[str, int] | None) -> None:
 
 async def create_session(tenant: str, provider: str | None, model: str | None,
                          browser_url: str | None = None,
-                         server: tuple[str, int] | None = None) -> EvalSession:
+                         server: tuple[str, int] | None = None,
+                         system_prompt: str | None = None) -> EvalSession:
     # Same tool and plugin registration the chat UI gets.
     importlib.import_module("app.chainlit_app")
     from app.plugins import for_host
@@ -138,6 +139,10 @@ async def create_session(tenant: str, provider: str | None, model: str | None,
     system = "\n\n".join(
         p.system_prompt.rstrip() for p in for_host(None) if p.system_prompt
     )
+    # Ablation control: a caller-supplied prompt replaces the production one.
+    # Only the prompt changes; tools, policy and limits stay production.
+    if system_prompt is not None:
+        system = system_prompt
     production = [
         ToolSchema(name=s.name, description=registry._describe(s), input_schema=s.input_schema)
         for s in registry.visible_for_host(None)
@@ -165,6 +170,13 @@ async def create_session(tenant: str, provider: str | None, model: str | None,
                      "note": "provider defaults; not controllable on this path"},
         "code_version": _code_version(),
     }
+    if system_prompt is not None:
+        # Marks every run in the session as non-production. The flag feeds
+        # config_digest; the prompt is in it only by hash, so the digest stays
+        # recomputable from the trace even when redaction rewrites the text
+        # (the text itself goes into each run.started, redacted like input).
+        config["production"] = False
+        config["system_prompt_source"] = "test_override"
     session = EvalSession(
         id=uuid.uuid4().hex, tenant=tenant, provider=provider, model=model,
         api_key=api_key, system=system, tools=tools, max_tokens=max_tokens,
@@ -315,7 +327,8 @@ async def start_turn(
     run_id = uuid.uuid4().hex
     runs_dir = tenant_dir(session.tenant) / "runs"
     redactor = Redactor([session.api_key])
-    trace = Trace(runs_dir, run_id, session.id, probe_id, session.config_digest, redactor)
+    trace = Trace(runs_dir, run_id, session.id, probe_id, session.config_digest, redactor,
+                  production=session.config.get("production", True))
     run = EvalRun(id=run_id, session_id=session.id, tenant=session.tenant, trace=trace)
     _runs[(session.tenant, run_id)] = run
     session.idempotency[idempotency_key] = run_id
@@ -345,8 +358,11 @@ async def _execute(session: EvalSession, run: EvalRun, input_text: str,
 async def _execute_locked(session: EvalSession, run: EvalRun, input_text: str,
                           parent_run_id: str | None, timeout_s: int) -> None:
     trace = run.trace
-    trace.emit("run.started", {"input": input_text, "parent_run_id": parent_run_id,
-                               "config": session.config, "timeout_s": timeout_s})
+    started = {"input": input_text, "parent_run_id": parent_run_id,
+               "config": session.config, "timeout_s": timeout_s}
+    if session.config.get("system_prompt_source") == "test_override":
+        started["system_prompt_override"] = session.system
+    trace.emit("run.started", started)
     snapshot = len(session.messages)
     session.messages.append(LlmMessage(role="user",
                                        content=[{"type": "text", "text": input_text}]))
@@ -413,13 +429,19 @@ def capabilities() -> dict[str, Any]:
         "providers_unsupported": UNSUPPORTED_PROVIDERS,
         "controls": {"temperature": "unsupported", "top_p": "unsupported",
                      "seed": "unsupported", "timeout_s": "supported",
-                     "idempotency_key": "required", "parent_run_id": "required after the first turn"},
+                     "idempotency_key": "required", "parent_run_id": "required after the first turn",
+                     "system_prompt": "optional test-only override on POST /sessions; the session "
+                                      "config then carries production=false and "
+                                      "system_prompt_source=test_override, run status carries "
+                                      "production=false, and each run.started carries the "
+                                      "prompt text (redacted)"},
         "limitations": [
             "the browser worker implements get_page_title and eval_js only; other "
             "primitives return tool_unavailable",
             "sessions live in memory; a restart closes them, and runs in flight are marked failed",
             "the resolved model revision is not reported by providers on this path (null)",
-            "the system prompt is the production default (plugins for no host) without the per-user project block",
+            "the system prompt is the production default (plugins for no host) without the per-user "
+            "project block, unless the session sets a test-only override",
             "event stream is polled (GET .../events?after=N); no SSE follow yet",
         ],
     }

@@ -38,6 +38,9 @@ class SessionIn(BaseModel):
     provider: str | None = None
     model: str | None = None
     browser: BrowserIn | None = None
+    # Test-only ablation control: replaces the production system prompt for
+    # this session, and marks its config as non-production.
+    system_prompt: str | None = None
 
 
 class TurnIn(BaseModel):
@@ -59,7 +62,7 @@ async def create_session(body: SessionIn, request: Request,
     try:
         session = await runner.create_session(
             tenant, body.provider, body.model, body.browser.url if body.browser else None,
-            server=request.scope.get("server"),
+            server=request.scope.get("server"), system_prompt=body.system_prompt,
         )
     except runner.EvalError as exc:
         raise HTTPException(status_code=exc.status, detail=str(exc)) from exc
