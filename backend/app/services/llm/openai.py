@@ -220,7 +220,26 @@ class _OpenAIStreamCM:
                         stop_reason = "max_tokens"
                     else:
                         stop_reason = "end_turn"
-                yield MessageStop(stop_reason=stop_reason, usage=usage)  # type: ignore[arg-type]
+                yield MessageStop(stop_reason=stop_reason, usage=usage,  # type: ignore[arg-type]
+                                  provider_reason=reason)
+
+            elif etype in ("response.incomplete", "response.failed"):
+                # Terminal events for a response the provider cut short or
+                # failed: "content_filter" arrives as incomplete_details, a
+                # failure as response.error. stop_reason stays "end_turn",
+                # which is what the loop assumed when these events went
+                # unhandled, so the chat behaves exactly as before; the raw
+                # reason is passed on for consumers that classify it.
+                resp = getattr(event, "response", None)
+                incomplete = getattr(resp, "incomplete_details", None)
+                error = getattr(resp, "error", None)
+                if etype == "response.failed":
+                    reason = f"failed:{getattr(error, 'code', None) or 'unknown'}"
+                else:
+                    reason = getattr(incomplete, "reason", None) or "incomplete"
+                yield MessageStop(stop_reason="end_turn", usage=usage,  # type: ignore[arg-type]
+                                  provider_reason=reason,
+                                  provider_message=getattr(error, "message", None))
 
 
 def _messages_to_responses_input(messages: list[Message]) -> list[dict[str, Any]]:

@@ -115,8 +115,15 @@ class TurnSink(Protocol):
         """A provider call is about to be made."""
         ...
 
-    async def model_stop(self, stop_reason: str, usage: Any) -> None:
-        """The provider call finished with this stop reason and usage."""
+    async def model_stop(
+        self, stop_reason: str, usage: Any, *,
+        provider_reason: str | None = None, provider_message: str | None = None,
+    ) -> None:
+        """The provider call finished with this stop reason and usage.
+
+        ``provider_reason``/``provider_message`` are the provider's raw stop
+        reason and any message it attached, before normalisation.
+        """
         ...
 
     async def status(self, text: str | None) -> None:
@@ -188,7 +195,10 @@ class ChainlitSink:
     async def model_request(self, model: str, message_count: int) -> None:
         pass
 
-    async def model_stop(self, stop_reason: str, usage: Any) -> None:
+    async def model_stop(
+        self, stop_reason: str, usage: Any, *,
+        provider_reason: str | None = None, provider_message: str | None = None,
+    ) -> None:
         pass
 
     async def status(self, text: str | None) -> None:
@@ -317,7 +327,11 @@ async def run_turn(*, messages: list[LlmMessage], run: RunContext) -> None:
                             block["input"] = {"_raw": joined}
                 elif isinstance(ev, MessageStop):
                     iter_stop_reason = ev.stop_reason
-                    await sink.model_stop(ev.stop_reason, ev.usage)
+                    await sink.model_stop(
+                        ev.stop_reason, ev.usage,
+                        provider_reason=ev.provider_reason,
+                        provider_message=ev.provider_message,
+                    )
                 elif isinstance(ev, StreamError):
                     await sink.text_end()
                     raise RuntimeError(f"{ev.type}: {ev.message}")

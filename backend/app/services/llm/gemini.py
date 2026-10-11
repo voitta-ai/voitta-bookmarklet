@@ -152,14 +152,24 @@ class _GeminiStreamCM:
         had_tool = False
         usage = Usage()
         finish_str = ""
+        # Raw provider reason, for consumers that classify blocks (#25): the
+        # candidate's finish reason name, or "prompt:<reason>" when Gemini
+        # blocked the prompt itself and returned no candidate.
+        provider_reason: str | None = None
 
         async for chunk in stream_obj:
+            feedback = getattr(chunk, "prompt_feedback", None)
+            block = getattr(feedback, "block_reason", None) if feedback is not None else None
+            block_name = (getattr(block, "name", None) or str(block)) if block else None
+            if block_name and block_name != "BLOCKED_REASON_UNSPECIFIED":
+                provider_reason = f"prompt:{block_name}"
             cands = getattr(chunk, "candidates", None) or []
             cand = cands[0] if cands else None
             if cand is not None:
                 fr = getattr(cand, "finish_reason", None)
                 if fr:
                     finish_str = str(fr)
+                    provider_reason = getattr(fr, "name", None) or str(fr)
             cand_content = getattr(cand, "content", None) if cand is not None else None
             parts = getattr(cand_content, "parts", None) or []
 
@@ -211,7 +221,8 @@ class _GeminiStreamCM:
             stop_reason = "max_tokens"
         else:
             stop_reason = "end_turn"
-        yield MessageStop(stop_reason=stop_reason, usage=usage)  # type: ignore[arg-type]
+        yield MessageStop(stop_reason=stop_reason, usage=usage,  # type: ignore[arg-type]
+                          provider_reason=provider_reason)
 
 
 # ---- request translation -----------------------------------------------
