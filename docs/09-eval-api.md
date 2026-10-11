@@ -106,6 +106,26 @@ every event. Events follow the v1 proposal schema (`schema_version`,
 - **Terminal event:** every run ends with exactly one, including on timeout
   and cancellation. A run cut off by a crash or restart is marked
   `run.failed` with kind `abandoned` on the next start.
+- **Provider rejections:** when the provider itself blocks a request, the run
+  ends `run.failed` with `error.kind` = `provider_rejected`, never as an agent
+  outcome. `error.signal` says how it was recognised:
+  - `stop_reason`: a block reported in-band. Anthropic `refusal`,
+    OpenAI and Codex `content_filter` or a failed response with a policy code,
+    Gemini `SAFETY`-family finish reasons and `prompt:<reason>` prompt
+    blocks. `error.provider_reason` holds the raw value.
+  - `error_code`: a provider exception with a policy code
+    (`content_policy_violation`, `invalid_prompt`).
+  - `message_signature`: the text fallback, used only for Codex's
+    cybersecurity flag, which arrives without a code.
+
+  The provider's own exception class, code, type, status and body are kept in
+  `error`. Every `model.response` carries the raw `provider_reason`, and every
+  other provider exception's code, status and body are recorded alongside its
+  usual `kind`. A response the provider failed for any other reason (a
+  Responses `response.failed` without a policy code) ends `run.failed` with
+  kind `provider_error`. An agent that answers but declines is an ordinary
+  `run.completed`. `/capabilities` lists the values recognised
+  (`provider_rejection`).
 - **Redaction:** the provider credential, values under secret-looking keys,
   and credential-shaped strings are replaced with `[REDACTED]` before writing.
   The `redactions` field lists the JSON paths that were changed.

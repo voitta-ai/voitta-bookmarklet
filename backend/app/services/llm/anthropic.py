@@ -330,9 +330,11 @@ class _AnthropicStreamCM:
                             getattr(u, "cache_creation_input_tokens", 0) or 0
                         )
             elif etype == "message_stop":
+                raw_reason = stop_reason
                 if stop_reason not in ("end_turn", "tool_use", "max_tokens", "stop_sequence"):
                     stop_reason = "end_turn"
-                yield MessageStop(stop_reason=stop_reason, usage=usage)  # type: ignore[arg-type]
+                yield MessageStop(stop_reason=stop_reason, usage=usage,  # type: ignore[arg-type]
+                                  provider_reason=raw_reason)
 
 
 def _message_to_dict(m: Message) -> dict[str, Any]:

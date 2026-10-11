@@ -37,6 +37,13 @@ class BlockStop:
 class MessageStop:
     stop_reason: StopReason
     usage: Usage
+    # The provider's own stop/finish reason before normalisation (e.g.
+    # Anthropic "refusal", OpenAI "content_filter", Gemini "SAFETY"), and any
+    # error code/message the provider attached. stop_reason above folds these
+    # into "end_turn"; consumers that must tell a provider-side block apart
+    # (the eval API, voitta-bookmarklet#25) read these instead.
+    provider_reason: str | None = None
+    provider_message: str | None = None
 
 
 @dataclass
