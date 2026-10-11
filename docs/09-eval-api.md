@@ -118,10 +118,13 @@ every event. Events follow the v1 proposal schema (`schema_version`,
   - `message_signature`: the text fallback, used only for Codex's
     cybersecurity flag, which arrives without a code.
 
-  The provider's own exception class, code, type, status and body are kept in
-  `error`. Every `model.response` carries the raw `provider_reason`, and every
-  other provider exception's code, status and body are recorded alongside its
-  usual `kind`. A response the provider failed for any other reason (a
+  The turn stops as soon as the provider reports the block, so a tool call in
+  the same response is never dispatched. `error` keeps the provider's
+  exception class, code, type and status, and from its error body only the
+  scalar fields `code`, `type`, `param` and `message` (bounded in length),
+  never the raw body. Every `model.response` carries the raw
+  `provider_reason`, and every other provider exception records the same
+  fields alongside its usual `kind`. A response the provider failed for any other reason (a
   Responses `response.failed` without a policy code) ends `run.failed` with
   kind `provider_error`. An agent that answers but declines is an ordinary
   `run.completed`. `/capabilities` lists the values recognised

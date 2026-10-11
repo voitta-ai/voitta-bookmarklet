@@ -227,9 +227,6 @@ class _TraceSink:
         self._provider = provider
         self._text: list[str] = []
         self.outputs: list[str] = []
-        # Set when a provider call ends in an in-band provider block or a
-        # failed response (#25); the run then ends run.failed with it.
-        self.rejection: dict[str, Any] | None = None
 
     async def text_delta(self, text: str) -> None:
         self._text.append(text)
@@ -271,13 +268,16 @@ class _TraceSink:
                                             "provider_reason": provider_reason,
                                             "usage": getattr(usage, "__dict__", usage),
                                             "model_resolved": None})
-        if self.rejection is None:
-            self.rejection = rejection.in_band(self._provider, provider_reason, provider_message)
-        if self.rejection is None and (provider_reason or "").startswith("failed:"):
+        error = rejection.in_band(self._provider, provider_reason, provider_message)
+        if error is None and (provider_reason or "").startswith("failed:"):
             # A failed response for any other reason (server error, overload):
             # the turn ends quietly in the loop, but it is not a completion.
-            self.rejection = {"kind": "provider_error", "provider": self._provider,
-                              "provider_reason": provider_reason, "message": provider_message}
+            error = {"kind": "provider_error", "provider": self._provider,
+                     "provider_reason": provider_reason, "message": provider_message}
+        if error is not None:
+            # Stop the turn here, inside the stream: a tool call that arrived
+            # in the same response must never be dispatched.
+            raise rejection.ProviderStopped(error)
 
     async def status(self, text: str | None) -> None:
         pass
@@ -391,19 +391,17 @@ async def _execute_locked(session: EvalSession, run: EvalRun, input_text: str,
         logger.exception("eval run %s failed", run.id)
         await sink.text_end()
         del session.messages[snapshot:]
-        error = rejection.from_exception(session.provider, exc) or {
-            **rejection.provider_error(exc), "kind": type(exc).__name__, "message": str(exc),
-        }
+        if isinstance(exc, rejection.ProviderStopped):
+            # Blocked or failed in-band: nothing the agent did ended the turn.
+            error = exc.error
+        else:
+            error = rejection.from_exception(session.provider, exc) or {
+                **rejection.provider_error(exc), "kind": type(exc).__name__, "message": str(exc),
+            }
         trace.finish("run.failed", {"error": error})
     else:
-        if sink.rejection is not None:
-            # The provider blocked or failed the response in-band; the turn
-            # "ended" but nothing the agent did produced that ending.
-            del session.messages[snapshot:]
-            trace.finish("run.failed", {"error": sink.rejection})
-        else:
-            final = sink.outputs[-1] if sink.outputs else ""
-            trace.finish("run.completed", {"final_output": final})
+        final = sink.outputs[-1] if sink.outputs else ""
+        trace.finish("run.completed", {"final_output": final})
 
 
 def get_run(tenant: str, run_id: str) -> EvalRun | None:

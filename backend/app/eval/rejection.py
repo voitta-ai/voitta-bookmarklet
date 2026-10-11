@@ -66,7 +66,8 @@ def in_band(provider: str, reason: str | None, message: str | None) -> dict[str,
 
 def from_exception(provider: str, exc: BaseException) -> dict[str, Any] | None:
     """The rejection described by a provider exception, or None."""
-    code = getattr(exc, "code", None)
+    fields = provider_error(exc)
+    code = fields.get("provider_code") or (fields.get("provider_body") or {}).get("code")
     if isinstance(code, str) and code in _ERROR_CODES.get(provider, frozenset()):
         signal = "error_code"
     elif any(sig in str(exc) for sig in _MESSAGE_SIGNATURES.get(provider, ())):
@@ -74,17 +75,48 @@ def from_exception(provider: str, exc: BaseException) -> dict[str, Any] | None:
     else:
         return None
     return {"kind": "provider_rejected", "provider": provider, "signal": signal,
-            **provider_error(exc), "message": str(exc)}
+            **fields, "message": str(exc)}
+
+
+class ProviderStopped(Exception):
+    """Raised by the eval sink the moment a provider call ends in a rejection
+    or a failed response, so the turn stops before any tool in that response
+    is dispatched. Carries the trace error."""
+
+    def __init__(self, error: dict[str, Any]) -> None:
+        super().__init__(error.get("message") or error["kind"])
+        self.error = error
+
+
+# Fields copied from a provider error body. Only these, only scalars, and
+# strings are bounded: the raw body can be any shape and is never persisted.
+_BODY_FIELDS = ("code", "type", "param", "message")
+_MAX_FIELD = 500
+
+
+def _scalar(val: Any) -> Any:
+    if isinstance(val, str):
+        return val if len(val) <= _MAX_FIELD else val[:_MAX_FIELD] + "…"
+    if isinstance(val, (int, float, bool)):
+        return val
+    return None
 
 
 def provider_error(exc: BaseException) -> dict[str, Any]:
-    """The structured fields a provider exception carries, for the trace."""
+    """Allowlisted, bounded fields from a provider exception, for the trace."""
     retval: dict[str, Any] = {"exception": type(exc).__name__}
     for attr, key in (("code", "provider_code"), ("type", "provider_type"),
-                      ("status_code", "status"), ("body", "provider_body")):
-        val = getattr(exc, attr, None)
+                      ("status_code", "status")):
+        val = _scalar(getattr(exc, attr, None))
         if val is not None:
             retval[key] = val
+    body = getattr(exc, "body", None)
+    if isinstance(body, dict):
+        inner = body.get("error") if isinstance(body.get("error"), dict) else body
+        fields = {f: _scalar(inner.get(f)) for f in _BODY_FIELDS}
+        fields = {k: v for k, v in fields.items() if v is not None}
+        if fields:
+            retval["provider_body"] = fields
     return retval
 
 
