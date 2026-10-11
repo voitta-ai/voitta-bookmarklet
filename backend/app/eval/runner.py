@@ -17,6 +17,7 @@ from urllib.parse import urlsplit
 
 from app.agent import Attachment, RunContext, run_turn
 from app.config import DEFAULT_MAX_TOKENS, DEFAULT_MAX_TOOL_ITERATIONS, PROJECT_ROOT
+from app.eval import rejection
 from app.eval.config import SCHEMA_VERSION, browser_hosts, tenant_dir
 from app.eval.redact import Redactor
 from app.eval.trace import Trace
@@ -233,10 +234,14 @@ async def close_all() -> None:
 class _TraceSink:
     """TurnSink that turns the loop's output into trace events."""
 
-    def __init__(self, trace: Trace) -> None:
+    def __init__(self, trace: Trace, provider: str) -> None:
         self._trace = trace
+        self._provider = provider
         self._text: list[str] = []
         self.outputs: list[str] = []
+        # Set when a provider call ends in an in-band provider block or a
+        # failed response (#25); the run then ends run.failed with it.
+        self.rejection: dict[str, Any] | None = None
 
     async def text_delta(self, text: str) -> None:
         self._text.append(text)
@@ -271,10 +276,20 @@ class _TraceSink:
         self._trace.emit("model.request", {"model_requested": model,
                                            "message_count": message_count})
 
-    async def model_stop(self, stop_reason: str, usage: Any) -> None:
+    async def model_stop(self, stop_reason: str, usage: Any, *,
+                         provider_reason: str | None = None,
+                         provider_message: str | None = None) -> None:
         self._trace.emit("model.response", {"stop_reason": stop_reason,
+                                            "provider_reason": provider_reason,
                                             "usage": getattr(usage, "__dict__", usage),
                                             "model_resolved": None})
+        if self.rejection is None:
+            self.rejection = rejection.in_band(self._provider, provider_reason, provider_message)
+        if self.rejection is None and (provider_reason or "").startswith("failed:"):
+            # A failed response for any other reason (server error, overload):
+            # the turn ends quietly in the loop, but it is not a completion.
+            self.rejection = {"kind": "provider_error", "provider": self._provider,
+                              "provider_reason": provider_reason, "message": provider_message}
 
     async def status(self, text: str | None) -> None:
         pass
@@ -366,7 +381,7 @@ async def _execute_locked(session: EvalSession, run: EvalRun, input_text: str,
     snapshot = len(session.messages)
     session.messages.append(LlmMessage(role="user",
                                        content=[{"type": "text", "text": input_text}]))
-    sink = _TraceSink(trace)
+    sink = _TraceSink(trace, session.provider)
     try:
         await asyncio.wait_for(run_turn(messages=session.messages, run=RunContext(
             provider_id=session.provider, api_key=session.api_key, model=session.model,
@@ -392,11 +407,19 @@ async def _execute_locked(session: EvalSession, run: EvalRun, input_text: str,
         logger.exception("eval run %s failed", run.id)
         await sink.text_end()
         del session.messages[snapshot:]
-        trace.finish("run.failed", {"error": {"kind": type(exc).__name__,
-                                              "message": str(exc)}})
+        error = rejection.from_exception(session.provider, exc) or {
+            **rejection.provider_error(exc), "kind": type(exc).__name__, "message": str(exc),
+        }
+        trace.finish("run.failed", {"error": error})
     else:
-        final = sink.outputs[-1] if sink.outputs else ""
-        trace.finish("run.completed", {"final_output": final})
+        if sink.rejection is not None:
+            # The provider blocked or failed the response in-band; the turn
+            # "ended" but nothing the agent did produced that ending.
+            del session.messages[snapshot:]
+            trace.finish("run.failed", {"error": sink.rejection})
+        else:
+            final = sink.outputs[-1] if sink.outputs else ""
+            trace.finish("run.completed", {"final_output": final})
 
 
 def get_run(tenant: str, run_id: str) -> EvalRun | None:
@@ -427,6 +450,7 @@ def capabilities() -> dict[str, Any]:
                   "test_sink_write commits only to allowlisted targets; "
                   "test_send_external is always blocked",
         "providers_unsupported": UNSUPPORTED_PROVIDERS,
+        "provider_rejection": rejection.describe(),
         "controls": {"temperature": "unsupported", "top_p": "unsupported",
                      "seed": "unsupported", "timeout_s": "supported",
                      "idempotency_key": "required", "parent_run_id": "required after the first turn",
@@ -443,5 +467,7 @@ def capabilities() -> dict[str, Any]:
             "the system prompt is the production default (plugins for no host) without the per-user "
             "project block, unless the session sets a test-only override",
             "event stream is polled (GET .../events?after=N); no SSE follow yet",
+            "provider rejections are recognised only from the values in provider_rejection; "
+            "Codex's cybersecurity flag carries no error code, so it is matched by message text",
         ],
     }
