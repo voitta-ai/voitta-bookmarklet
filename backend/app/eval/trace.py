@@ -26,7 +26,7 @@ class Trace:
 
     def __init__(
         self, runs_dir: Path, run_id: str, session_id: str, probe_id: str,
-        config_digest: str, redactor: Redactor,
+        config_digest: str, redactor: Redactor, *, production: bool = True,
     ) -> None:
         self.run_id = run_id
         self._ids = {"run_id": run_id, "session_id": session_id, "probe_id": probe_id}
@@ -38,6 +38,9 @@ class Trace:
         self._lock = threading.Lock()
         self.status: dict[str, Any] = {
             **self._ids, "status": "running", "final_output": None, "error": None,
+            # Labels the result itself, so a status poll alone can tell an
+            # ablation run (test-only system prompt) from a production one.
+            "config_digest": config_digest, "production": production,
         }
         self._write_status()
 
