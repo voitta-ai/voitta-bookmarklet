@@ -111,7 +111,7 @@ class TurnSink(Protocol):
         """A message from the loop (truncation, iteration cap)."""
         ...
 
-    async def model_request(self, model: str, message_count: int) -> None:
+    async def model_request(self, model: str, message_count: int | None) -> None:
         """A provider call is about to be made."""
         ...
 
@@ -192,7 +192,7 @@ class ChainlitSink:
     async def notice(self, text: str) -> None:
         await cl.Message(content=text).send()
 
-    async def model_request(self, model: str, message_count: int) -> None:
+    async def model_request(self, model: str, message_count: int | None) -> None:
         pass
 
     async def model_stop(

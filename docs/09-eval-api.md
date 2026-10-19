@@ -16,8 +16,8 @@ VOITTA_EVAL_TOKENS="tenant-a=<token-a>,tenant-b=<token-b>" ./start.sh
 - **Auth:** requests carry `Authorization: Bearer <token>`. These routes are
   outside the browser login guard.
 - **Model:** the provider and model come from the operator's settings at the
-  moment a session is created, or from the session request. The Claude
-  subscription provider is not supported yet (#17).
+  moment a session is created, or from the session request. Every provider
+  is supported, including the Claude subscription (`claude_code`, see below).
 
 ## Routes (`/api/eval/v1`)
 
@@ -28,7 +28,7 @@ VOITTA_EVAL_TOKENS="tenant-a=<token-a>,tenant-b=<token-b>" ./start.sh
 | `POST /sessions/{id}/turns` `{input, probe_id, idempotency_key, parent_run_id, timeout_s?}` | Starts a run and returns `run_id` |
 | `GET /runs/{id}` | Status (`running`, `completed`, `failed`, `cancelled`), `final_output`, `error`, `config_digest` and `production` |
 | `GET /runs/{id}/events?after=N` | The run's event log as JSONL, from sequence `N+1` on |
-| `DELETE /sessions/{id}` | Closes the session: cancels its running and queued turns (they end `run.cancelled`), clears its history and test sink, and shuts its browser worker down. Run logs are kept |
+| `DELETE /sessions/{id}` | Closes the session: cancels its running and queued turns (they end `run.cancelled`), clears its history and test sink, deletes its engine transcripts (`claude_code`), and shuts its browser worker down. Run logs are kept |
 
 **Turn rules:**
 - `parent_run_id` must be the session's previous run, or `null` for the first
@@ -71,6 +71,40 @@ VOITTA_EVAL_TOKENS="tenant-a=<token-a>,tenant-b=<token-b>" ./start.sh
 | Attempted | `tool.started` |
 | Committed | `tool.completed` and `action.committed` (with the receipt) |
 | Browser tool ran | `tool.completed` with the result, or `tool.failed` with the error |
+
+## Claude subscription (`claude_code`)
+
+A session with `provider: "claude_code"` runs the turn in the Claude Code
+engine (Claude Agent SDK) on the operator's subscription token, under the same
+policy as the other providers:
+
+- **Tools:** the model sees the session's tool list (production tools plus
+  test tools), served in-process and routed to the same dispatcher, so the
+  same calls execute or are blocked, with the same events.
+- **Engine built-ins:** the engine's own tools (`Bash`, `Read`, `WebFetch`
+  and the rest) stay visible, as they are in chat, but every call is denied
+  and traced as `tool.requested` (with `origin: "engine"`) and
+  `policy.decision`. A `PreToolUse` hook makes the decision, so read-only
+  tools that skip the permission callback are covered too. The one exception
+  is `ToolSearch`, which is allowed (and traced) because it only loads tool
+  schemas inside the engine; without it the engine cannot call any Voitta
+  tool.
+- **History:** each turn resumes the parent run's engine session as a fork.
+  A run that fails or is cancelled is never resumed from, so its content
+  never reaches a later turn.
+- **Storage:** the engine's config dir and working directory are under the
+  session's directory, not the chat workspace, so eval turns never appear in
+  the chat history. They are deleted when the session closes.
+- **Trace:** `model.request` and `model.response` come from the engine's raw
+  API stream. `message_count` is `null` because the engine owns the history.
+  A `refusal` stop reason ends the run as `provider_rejected`.
+- **Config:** `max_tool_iterations` is the engine's turn cap. `max_tokens` is
+  `null`, since the engine sizes its own responses. `config.engine` records
+  the engine version.
+
+This sends traffic through the operator's Claude subscription. Use an API-key
+provider (`anthropic`) for adversarial batteries, and keep `claude_code` for
+parity and smoke runs.
 
 ## Browser worker
 
@@ -121,7 +155,7 @@ every event. Events follow the v1 proposal schema (`schema_version`,
 - **Provider rejections:** when the provider itself blocks a request, the run
   ends `run.failed` with `error.kind` = `provider_rejected`, never as an agent
   outcome. `error.signal` says how it was recognised:
-  - `stop_reason`: a block reported in-band. Anthropic `refusal`,
+  - `stop_reason`: a block reported in-band. Anthropic and `claude_code` `refusal`,
     OpenAI and Codex `content_filter` or a failed response with a policy code,
     Gemini `SAFETY`-family finish reasons and `prompt:<reason>` prompt
     blocks. `error.provider_reason` holds the raw value.

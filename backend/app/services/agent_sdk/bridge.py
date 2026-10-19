@@ -17,6 +17,7 @@ import asyncio
 import json
 import logging
 import os
+from collections.abc import Awaitable, Callable, Iterable
 from typing import Any
 
 # Installed at runtime by app.installer — import defensively so app boot never
@@ -29,7 +30,7 @@ except ImportError:  # SDK not installed yet
     tool = None  # type: ignore
 
 from app.services.agent_sdk.config import MCP_SERVER_NAME
-from app.tools.registry import ToolCtx, registry
+from app.tools.registry import ToolCtx, ToolResult, registry
 
 logger = logging.getLogger(__name__)
 
@@ -113,17 +114,42 @@ def _make_tool(spec, ctx: ToolCtx):
                 "content": [{"type": "text", "text": json.dumps(err, ensure_ascii=False)}],
                 "isError": True,
             }
-        if res.ok:
-            return {"content": _result_to_mcp_content(res.result)}
-        err = res.error or {"kind": "error", "message": "tool failed"}
-        return {
-            "content": [{"type": "text", "text": json.dumps(err, ensure_ascii=False, default=str)}],
-            "isError": True,
-        }
+        return _to_mcp(res)
 
     # ``@tool(name, description, input_schema)`` accepts a JSON-schema dict —
     # which is exactly what ToolSpec.input_schema already is.
     return tool(spec.name, spec.description, spec.input_schema)(_handler)
+
+
+def _to_mcp(res: ToolResult) -> dict[str, Any]:
+    """A registry ToolResult as an MCP tool result."""
+    if res.ok:
+        return {"content": _result_to_mcp_content(res.result)}
+    err = res.error or {"kind": "error", "message": "tool failed"}
+    return {
+        "content": [{"type": "text", "text": json.dumps(err, ensure_ascii=False, default=str)}],
+        "isError": True,
+    }
+
+
+def build_dispatch_server(
+    tools: Iterable[Any], dispatch: Callable[[str, dict[str, Any]], Awaitable[ToolResult]],
+) -> "tuple[object, list[str]]":
+    """Like :func:`build_tool_server`, but for an explicit tool list (objects
+    with ``name``, ``description`` and ``input_schema``) whose calls all go to
+    ``dispatch`` instead of the registry. The caller owns policy and timeouts."""
+
+    def _make(name: str, description: str, schema: dict[str, Any]):
+        async def _handler(args: dict[str, Any]) -> dict[str, Any]:
+            return _to_mcp(await dispatch(name, dict(args or {})))
+        return tool(name, description, schema)(_handler)
+
+    tools = list(tools)
+    server = create_sdk_mcp_server(
+        name=MCP_SERVER_NAME,
+        tools=[_make(t.name, t.description, t.input_schema) for t in tools],
+    )
+    return server, [f"mcp__{MCP_SERVER_NAME}__{t.name}" for t in tools]
 
 
 def build_tool_server(ctx: ToolCtx) -> "tuple[object, list[str]]":

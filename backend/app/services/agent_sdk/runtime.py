@@ -101,6 +101,8 @@ class SdkRunContext:
     the engine needs instead of the API loop's provider, key and limits.
     ``on_session_id`` is called as soon as the engine announces the session
     id (at turn start, before the result), so the chat UI can latch it.
+    ``options`` gets the built engine options last and returns the ones to
+    run with; the eval API uses it to swap the tool surface and storage.
     """
 
     system: str
@@ -109,6 +111,7 @@ class SdkRunContext:
     tool_ctx: ToolCtx
     sink: TurnSink
     on_session_id: Callable[[str], None] | None = None
+    options: Callable[[Any], Any] | None = None
 
 
 # Optional wall-clock ceiling for one brain turn, in seconds. Off by default:
@@ -333,6 +336,8 @@ async def run_agent_sdk_turn(
         system=run.system, model=model, resume=resume_session_id, ctx=ctx,
         can_use_tool=_make_can_use_tool(), cli_path=engine,
     )
+    if run.options is not None:
+        options = run.options(options)
 
     steps: dict[str, Any] = {}
     session_id: str | None = resume_session_id
@@ -390,7 +395,10 @@ async def run_agent_sdk_turn(
                     # Telemetry only — phases + live counters for the status
                     # line. Chat content renders exclusively from complete
                     # messages below, so deltas can never double-append.
-                    t.on_stream_event(getattr(message, "event", None) or {})
+                    event = getattr(message, "event", None) or {}
+                    t.on_stream_event(event)
+                    if message.parent_tool_use_id is None:
+                        await _report_model_call(sink, event, model)
                     continue
                 if isinstance(message, AssistantMessage):
                     if getattr(message, "model", None) == SYNTHETIC_MODEL:
@@ -524,6 +532,27 @@ async def run_agent_sdk_turn(
         return TurnResult(session_id=session_id, is_error=True)
 
     return TurnResult(session_id=session_id, is_error=False)
+
+
+# Stop reasons the TurnSink contract names; anything else (``refusal``,
+# ``pause_turn``, ...) is reported as end_turn with the raw value alongside,
+# the same normalisation the Anthropic API provider applies.
+_STOP_REASONS = ("end_turn", "tool_use", "max_tokens", "stop_sequence")
+
+
+async def _report_model_call(sink: TurnSink, event: dict[str, Any], model: str | None) -> None:
+    """Report one engine model call to the sink from its raw API stream:
+    ``message_start`` opens it, the ``message_delta`` carrying a stop reason
+    closes it. The engine owns the history, so the message count is unknown."""
+    kind = event.get("type")
+    if kind == "message_start":
+        msg = event.get("message") or {}
+        await sink.model_request(msg.get("model") or model or DEFAULT_MODEL, None)
+    elif kind == "message_delta":
+        raw = (event.get("delta") or {}).get("stop_reason")
+        if raw:
+            await sink.model_stop(raw if raw in _STOP_REASONS else "end_turn",
+                                  event.get("usage"), provider_reason=raw)
 
 
 def _raise_for_result(result_msg: ResultMessage, model: str | None = None) -> None:
