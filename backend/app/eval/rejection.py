@@ -21,6 +21,7 @@ from typing import Any
 _IN_BAND: dict[str, frozenset[str]] = {
     # Streaming safety classifiers end the response with stop_reason "refusal".
     "anthropic": frozenset({"refusal"}),
+    "claude_code": frozenset({"refusal"}),
     # Responses API: incomplete_details.reason.
     "openai": frozenset({"content_filter"}),
     "codex": frozenset({"content_filter"}),

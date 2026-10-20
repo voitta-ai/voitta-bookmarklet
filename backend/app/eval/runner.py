@@ -7,6 +7,7 @@ import hashlib
 import importlib
 import json
 import logging
+import shutil
 import time
 import tomllib
 import uuid
@@ -17,7 +18,7 @@ from urllib.parse import urlsplit
 
 from app.agent import Attachment, RunContext, run_turn
 from app.config import DEFAULT_MAX_TOKENS, DEFAULT_MAX_TOOL_ITERATIONS, PROJECT_ROOT
-from app.eval import rejection
+from app.eval import engine, rejection
 from app.eval.config import SCHEMA_VERSION, browser_hosts, tenant_dir
 from app.eval.redact import Redactor
 from app.eval.trace import Trace
@@ -26,6 +27,9 @@ from app.eval.tools import (
 )
 from app.services.llm import ToolSchema, default_model_for, resolve_api_key
 from app.services.llm.base import Message as LlmMessage
+from app.services.agent_sdk import config as brain_config
+from app.services.agent_sdk.credentials import load_token
+from app.services.agent_sdk.runtime import SdkRunContext, run_agent_sdk_turn
 from app.settings import load as load_user_settings
 from app.tools.browser import UnavailableTransport
 from app.tools.registry import ToolCtx, ToolResult, registry
@@ -33,7 +37,7 @@ from app.tools.registry import ToolCtx, ToolResult, registry
 logger = logging.getLogger(__name__)
 
 DEFAULT_TIMEOUT_S = 300
-UNSUPPORTED_PROVIDERS = {"claude_code": "the Claude subscription brain is not on the eval path yet (#17)"}
+UNSUPPORTED_PROVIDERS: dict[str, str] = {}
 
 
 class EvalError(Exception):
@@ -76,6 +80,8 @@ class EvalSession:
     idempotency: dict[str, str] = field(default_factory=dict)
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
     closed: bool = False
+    # claude_code only: the engine session the next turn resumes (and forks).
+    engine_session_id: str | None = None
 
 
 @dataclass
@@ -128,10 +134,17 @@ async def create_session(tenant: str, provider: str | None, model: str | None,
     provider = provider or settings.get("provider", "anthropic")
     if provider in UNSUPPORTED_PROVIDERS:
         raise EvalError(400, UNSUPPORTED_PROVIDERS[provider])
-    api_key = resolve_api_key(provider, settings.get("api_keys") or {})
+    on_engine = provider == brain_config.BRAIN_PROVIDER
+    if on_engine and not brain_config.is_available():
+        raise EvalError(400, "the Claude Code engine is not installed")
+    if on_engine:
+        api_key = load_token()
+    else:
+        api_key = resolve_api_key(provider, settings.get("api_keys") or {})
     if not api_key:
         raise EvalError(400, f"no credential configured for provider {provider!r}")
-    model = model or (settings.get("models") or {}).get(provider) or default_model_for(provider)
+    model = (model or (settings.get("models") or {}).get(provider)
+             or (brain_config.DEFAULT_MODEL if on_engine else default_model_for(provider)))
     if browser_url is not None:
         _check_browser_url(browser_url, server)
 
@@ -171,6 +184,15 @@ async def create_session(tenant: str, provider: str | None, model: str | None,
                      "note": "provider defaults; not controllable on this path"},
         "code_version": _code_version(),
     }
+    if on_engine:
+        # The engine sizes its own responses and runs its own tool loop:
+        # max_tool_iterations becomes its turn cap, max_tokens is not ours.
+        config["max_tokens"] = None
+        config["engine"] = {
+            "version": await asyncio.to_thread(brain_config.engine_version),
+            "builtin_tools": "the engine's default set, shown to the model, never executed",
+            "max_tokens": "not controllable on this path",
+        }
     if system_prompt is not None:
         # Marks every run in the session as non-production. The flag feeds
         # config_digest; the prompt is in it only by hash, so the digest stays
@@ -184,7 +206,7 @@ async def create_session(tenant: str, provider: str | None, model: str | None,
         max_tool_iterations=max_iters, config=config, config_digest=_sha(config),
         sink=TestSink(Path(), Redactor([api_key])),
     )
-    session.sink.path = tenant_dir(tenant) / "sessions" / session.id / "sink.jsonl"
+    session.sink.path = _session_dir(session) / "sink.jsonl"
     if browser_url is not None:
         from app.eval.browser_worker import start_worker
         try:
@@ -220,6 +242,8 @@ async def close_session(tenant: str, session_id: str) -> None:
     await asyncio.gather(*tasks, return_exceptions=True)
     session.messages.clear()
     session.sink.clear()
+    # The engine's transcripts for this session (claude_code only).
+    shutil.rmtree(_session_dir(session) / "engine", ignore_errors=True)
     del _sessions[(tenant, session_id)]
     if session.browser is not None:
         await session.browser.close()
@@ -269,7 +293,7 @@ class _TraceSink:
     async def notice(self, text: str) -> None:
         self._trace.emit("assistant.output", {"kind": "notice", "text": text})
 
-    async def model_request(self, model: str, message_count: int) -> None:
+    async def model_request(self, model: str, message_count: int | None) -> None:
         self._trace.emit("model.request", {"model_requested": model,
                                            "message_count": message_count})
 
@@ -293,6 +317,45 @@ class _TraceSink:
 
     async def status(self, text: str | None) -> None:
         pass
+
+
+class EngineTurnTimeout(Exception):
+    pass
+
+
+def _session_dir(session: EvalSession) -> Path:
+    return tenant_dir(session.tenant) / "sessions" / session.id
+
+
+def _provider_stopped(exc: BaseException) -> rejection.ProviderStopped | None:
+    """The sink's ProviderStopped, also when the engine runtime re-raised it
+    wrapped in its own error type."""
+    seen: BaseException | None = exc
+    while seen is not None:
+        if isinstance(seen, rejection.ProviderStopped):
+            return seen
+        seen = seen.__cause__ or seen.__context__
+    return None
+
+
+async def _engine_turn(session: EvalSession, trace: Trace, input_text: str,
+                       tool_ctx: ToolCtx, sink: _TraceSink, dispatch) -> None:
+    """One claude_code turn under the eval policy (see app.eval.engine)."""
+    result = await run_agent_sdk_turn(user_text=input_text, run=SdkRunContext(
+        system=session.system, model=session.model,
+        resume_session_id=session.engine_session_id, tool_ctx=tool_ctx, sink=sink,
+        options=engine.policy(
+            tools=session.tools, trace=trace, session_dir=_session_dir(session),
+            max_turns=session.max_tool_iterations,
+            dispatch=lambda name, args, call_id: dispatch(name, args, tool_ctx, call_id),
+        ),
+    ))
+    if result.is_error:
+        # The runtime ends a turn that hits VOITTA_BRAIN_TURN_TIMEOUT_S
+        # quietly; here it is a failure, and its fork must not be resumed.
+        raise EngineTurnTimeout("the engine turn hit VOITTA_BRAIN_TURN_TIMEOUT_S")
+    # Reached only on success: a failed turn's fork is never resumed from.
+    session.engine_session_id = result.session_id
 
 
 def _dispatcher(session: EvalSession, trace: Trace):
@@ -382,18 +445,24 @@ async def _execute_locked(session: EvalSession, run: EvalRun, input_text: str,
     session.messages.append(LlmMessage(role="user",
                                        content=[{"type": "text", "text": input_text}]))
     sink = _TraceSink(trace, session.provider)
-    try:
-        await asyncio.wait_for(run_turn(messages=session.messages, run=RunContext(
+    tool_ctx = ToolCtx(
+        session_id=f"eval:{session.id}",
+        browser=session.browser or UnavailableTransport(
+            "no browser worker is attached to this eval session"),
+    )
+    dispatch = _dispatcher(session, trace)
+    if session.provider == brain_config.BRAIN_PROVIDER:
+        turn = _engine_turn(session, trace, input_text, tool_ctx, sink, dispatch)
+    else:
+        turn = run_turn(messages=session.messages, run=RunContext(
             provider_id=session.provider, api_key=session.api_key, model=session.model,
-            system=session.system, tool_ctx=ToolCtx(
-                session_id=f"eval:{session.id}",
-                browser=session.browser or UnavailableTransport(
-                    "no browser worker is attached to this eval session"),
-            ),
+            system=session.system, tool_ctx=tool_ctx,
             max_tokens=session.max_tokens,
             max_tool_iterations=session.max_tool_iterations,
-            sink=sink, tools=session.tools, dispatch=_dispatcher(session, trace),
-        )), timeout=timeout_s)
+            sink=sink, tools=session.tools, dispatch=dispatch,
+        ))
+    try:
+        await asyncio.wait_for(turn, timeout=timeout_s)
     except asyncio.TimeoutError:
         await sink.text_end()
         del session.messages[snapshot:]
@@ -407,9 +476,10 @@ async def _execute_locked(session: EvalSession, run: EvalRun, input_text: str,
         logger.exception("eval run %s failed", run.id)
         await sink.text_end()
         del session.messages[snapshot:]
-        if isinstance(exc, rejection.ProviderStopped):
+        stopped = _provider_stopped(exc)
+        if stopped is not None:
             # Blocked or failed in-band: nothing the agent did ended the turn.
-            error = exc.error
+            error = stopped.error
         else:
             error = rejection.from_exception(session.provider, exc) or {
                 **rejection.provider_error(exc), "kind": type(exc).__name__, "message": str(exc),
@@ -465,6 +535,11 @@ def capabilities() -> dict[str, Any]:
             "the system prompt is the production default (plugins for no host) without the per-user "
             "project block, unless the session sets a test-only override",
             "event stream is polled (GET .../events?after=N); no SSE follow yet",
+            "claude_code runs the Claude Code engine on the operator's subscription: its "
+            "built-in tools are shown to the model but every call is denied and traced; "
+            "max_tool_iterations caps the engine's turns and max_tokens is not controllable; "
+            "each turn forks the parent run's engine session, and the engine's transcripts "
+            "are deleted when the session closes",
             "provider rejections are recognised only from the values in provider_rejection; "
             "Codex's cybersecurity flag carries no error code, so it is matched by message text",
         ],

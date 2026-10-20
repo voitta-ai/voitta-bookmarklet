@@ -179,6 +179,17 @@ def engine_cli_path() -> str | None:
     in charge (and its CLINotFoundError). May spawn ``claude --version`` on
     first use — call it off the event loop.
     """
+    return _select_engine()[0]
+
+
+def engine_version() -> str | None:
+    """Version of the engine :func:`engine_cli_path` picks, when known.
+    Same caveat: may spawn ``claude --version``."""
+    version = _select_engine()[1]
+    return ".".join(map(str, version)) if version else None
+
+
+def _select_engine() -> tuple[str | None, tuple[int, ...] | None]:
     bundled = _bundled_engine()
     system = _cli_path_cached()
     system_version = None
@@ -189,8 +200,8 @@ def engine_cli_path() -> str | None:
         except OSError:
             system_version = None
     if bundled and (system_version is None or bundled[1] >= system_version):
-        return bundled[0]
-    return system
+        return bundled
+    return system, system_version
 
 
 def is_available() -> bool:
