@@ -23,7 +23,6 @@ from __future__ import annotations
 import dataclasses
 import json
 import uuid
-from collections import defaultdict, deque
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
@@ -65,13 +64,18 @@ def policy(*, tools: Any, dispatch: Dispatch, trace: Trace, session_dir: Path,
     policy. ``dispatch(name, args, call_id)`` is the eval dispatcher."""
     from claude_agent_sdk import HookMatcher, PermissionResultAllow, PermissionResultDeny
 
-    # The MCP handler does not receive the tool-use id; the hook, which runs
-    # first for the same call, does. Hand it over keyed by name and input.
-    pending: defaultdict[tuple[str, str], deque[str]] = defaultdict(deque)
+    # The MCP handler gets only the arguments, not the tool-use id; the hook,
+    # which runs just before it, does. The engine runs these tools one at a
+    # time (none declares readOnlyHint, which is what lets it run tools in
+    # parallel), so the hook for a call is the last one before its handler.
+    # One slot, overwritten by every hook: a call the SDK rejects before the
+    # handler (invalid arguments) leaves nothing behind for a later call.
+    last: list[tuple[tuple[str, str], str]] = []
 
     async def _dispatch(name: str, args: dict[str, Any]) -> ToolResult:
-        queue = pending.get(_key(name, args))
-        call_id = queue.popleft() if queue else uuid.uuid4().hex
+        call_id = uuid.uuid4().hex
+        if last and last[0][0] == _key(name, args):
+            call_id = last.pop()[1]
         return await dispatch(name, args, call_id)
 
     async def _pre_tool_use(data: Any, tool_use_id: str | None, _context: Any) -> dict[str, Any]:
@@ -79,7 +83,7 @@ def policy(*, tools: Any, dispatch: Dispatch, trace: Trace, session_dir: Path,
         args = data.get("tool_input") or {}
         call_id = data.get("tool_use_id") or tool_use_id or uuid.uuid4().hex
         if name.startswith(_PREFIX):
-            pending[_key(name.removeprefix(_PREFIX), args)].append(call_id)
+            last[:] = [(_key(name.removeprefix(_PREFIX), args), call_id)]
             return {"hookSpecificOutput": {"hookEventName": "PreToolUse",
                                            "permissionDecision": "allow"}}
         allowed = name in _ENGINE_INTERNAL

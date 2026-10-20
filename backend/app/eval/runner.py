@@ -319,6 +319,10 @@ class _TraceSink:
         pass
 
 
+class EngineTurnTimeout(Exception):
+    pass
+
+
 def _session_dir(session: EvalSession) -> Path:
     return tenant_dir(session.tenant) / "sessions" / session.id
 
@@ -346,6 +350,10 @@ async def _engine_turn(session: EvalSession, trace: Trace, input_text: str,
             dispatch=lambda name, args, call_id: dispatch(name, args, tool_ctx, call_id),
         ),
     ))
+    if result.is_error:
+        # The runtime ends a turn that hits VOITTA_BRAIN_TURN_TIMEOUT_S
+        # quietly; here it is a failure, and its fork must not be resumed.
+        raise EngineTurnTimeout("the engine turn hit VOITTA_BRAIN_TURN_TIMEOUT_S")
     # Reached only on success: a failed turn's fork is never resumed from.
     session.engine_session_id = result.session_id
 
