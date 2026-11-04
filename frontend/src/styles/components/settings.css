@@ -17,6 +17,9 @@
 .view-settings label:first-of-type {
   margin-top: 0;
 }
+.view-settings input:not([type]),
+.view-settings input[type="password"],
+.view-settings input[type="url"],
 .view-settings input[type="text"],
 .view-settings input[type="number"],
 .view-settings input[type="file"],
@@ -38,9 +41,9 @@
   padding: 5px 8px;
   font-size: 12px;
 }
-/* Mask API keys without using type=password (avoids Chrome's
-   "Save password?" prompt). */
-.view-settings input.secret {
+/* Mask credentials without login/password semantics. Applies throughout
+   the shadow root, including the subscription-token prompt outside Settings. */
+input.secret {
   -webkit-text-security: disc;
   text-security: disc;
 }

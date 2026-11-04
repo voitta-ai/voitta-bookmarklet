@@ -11,7 +11,8 @@ import { saveSettings, AGENT_SDK_PROVIDER } from "./lib/settings";
 import { useAuth } from "./lib/auth";
 import { DOG_ICON_DATA_URI } from "./lib/dogIcon";
 import ChatPane from "./ChatPane";
-import SettingsView from "./SettingsView";
+import SettingsView, { ROUTINES_TAB } from "./SettingsView";
+import AlarmClock from "./AlarmClock";
 import CallFnRouter from "./lib/CallFnRouter";
 import ReportPane from "./report/ReportPane";
 import ThreadPicker from "./ThreadPicker";
@@ -198,6 +199,13 @@ export default function Drawer({ backendOrigin }: Props) {
     ? settings.agent_sdk.available
     : Boolean(settings.has_api_keys[settings.provider]);
   const [view, setView] = useState<View>(currentHasKey ? "chat" : "settings");
+  // Which settings tab to open on (the alarm clock deep-links to Routines);
+  // `n` re-keys SettingsView so a repeat deep-link re-applies.
+  const [settingsTarget, setSettingsTarget] = useState<{
+    tab?: string;
+    routine?: { id: string | null; createNew: boolean };
+    n: number;
+  }>({ n: 0 });
 
   // Effective light/dark. Recomputed when the persisted theme changes, and —
   // while in "auto" — kept in sync with the OS scheme via a matchMedia listener
@@ -287,6 +295,8 @@ export default function Drawer({ backendOrigin }: Props) {
   }, []);
 
   function toggleView(target: View) {
+    // The gear always opens on the default tab, not a stale deep-link.
+    if (target === "settings" && settingsTarget.tab) setSettingsTarget((t) => ({ n: t.n + 1 }));
     setView((v) => (v === target ? "chat" : target));
   }
 
@@ -366,6 +376,19 @@ export default function Drawer({ backendOrigin }: Props) {
               setNewConvKey((k) => k + 1);
             }}
           />
+          {view === "chat" && (
+            <AlarmClock
+              backendOrigin={backendOrigin}
+              onEditRoutines={(id) => {
+                setSettingsTarget((t) => ({
+                  tab: ROUTINES_TAB,
+                  routine: { id, createNew: id === null },
+                  n: t.n + 1,
+                }));
+                setView("settings");
+              }}
+            />
+          )}
           <span className="spacer" />
           {auth.email && <UserMenu email={auth.email} onLogout={auth.logout} />}
           {view === "chat" && (
@@ -460,7 +483,16 @@ export default function Drawer({ backendOrigin }: Props) {
           />
         </div>
         {view === "settings" && (
-          <SettingsView backendOrigin={backendOrigin} onClose={() => setView("chat")} />
+          <SettingsView
+            key={settingsTarget.n}
+            backendOrigin={backendOrigin}
+            initialTab={settingsTarget.tab}
+            routineFocus={settingsTarget.routine}
+            onClose={() => {
+              setSettingsTarget((t) => ({ n: t.n + 1 }));
+              setView("chat");
+            }}
+          />
         )}
       </aside>
 

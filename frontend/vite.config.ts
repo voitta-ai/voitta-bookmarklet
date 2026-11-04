@@ -21,7 +21,7 @@ export default defineConfig({
   // process.env.NODE_ENV at runtime. Vite doesn't shim `process` in lib
   // builds, so we inline the values it needs.
   define: {
-    "process.env.NODE_ENV": JSON.stringify("production"),
+    "process.env.NODE_ENV": JSON.stringify(process.env.VITEST ? "test" : "production"),
     "process.env": "{}",
   },
   build: {

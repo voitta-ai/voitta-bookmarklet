@@ -123,14 +123,22 @@ class ToolRegistry:
             return
         self._tools[spec.name] = spec
 
+    def _effective_tools(self) -> dict[str, ToolSpec]:
+        # User MCP endpoints/schemas must never enter the static global map.
+        # Overlay lookup follows the same current-user context as settings.
+        if self is registry:
+            from app.services.mcp.catalog import tools
+            return {**tools(), **self._tools}
+        return self._tools
+
     def all(self) -> list[ToolSpec]:
-        return list(self._tools.values())
+        return list(self._effective_tools().values())
 
     def names(self) -> list[str]:
-        return sorted(self._tools)
+        return sorted(self._effective_tools())
 
     def get(self, name: str) -> ToolSpec | None:
-        return self._tools.get(name)
+        return self._effective_tools().get(name)
 
     def visible_for_host(self, host: str | None) -> list[ToolSpec]:
         """Tools whose ``host_pattern`` matches ``host`` and whose
@@ -165,7 +173,7 @@ class ToolRegistry:
                     extra_map = {}
             return host_activation.matches(host, extra_map.get(plugin_name, []))
 
-        for s in self._tools.values():
+        for s in self._effective_tools().values():
             if s.host_pattern is not None:
                 if not hostname:
                     hidden.append(f"{s.name}(no-host)")
@@ -230,7 +238,7 @@ class ToolRegistry:
         self, name: str, args: dict[str, Any], ctx: ToolCtx
     ) -> ToolResult:
         t0 = time.perf_counter()
-        spec = self._tools.get(name)
+        spec = self.get(name)
         if spec is None:
             return ToolResult(
                 ok=False,
@@ -284,6 +292,10 @@ class ToolRegistry:
 
     def reset_for_tests(self) -> None:
         self._tools.clear()
+        if self is registry:
+            from app.services.mcp import catalog
+            catalog._TOOLS.clear()
+            catalog._STATES.clear()
 
 
 # Module-level singleton — what plugins (and core tools) import.

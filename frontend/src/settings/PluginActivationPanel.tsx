@@ -11,13 +11,14 @@
 // requires the page's port to match, so a plugin pinned to one local
 // app doesn't light up on every other localhost port.
 //
-// Cards with a declarative ``settings_schema`` expand (chevron) to the
-// schema-rendered settings form — API keys and the MCP connector
-// status live here, so schema plugins don't need their own tab.
+// Every card expands to show global MCP server bindings and token
+// overrides. Plugins with a declarative settings_schema also show their
+// existing settings and legacy per-host credential controls.
 
 import { useState } from "react";
 import { saveSettings } from "../lib/settings";
 import PluginSettingsPanel from "./PluginSettingsPanel";
+import { PluginMCPSettings } from "./MCPSettingsPanel";
 import type { PluginInfo } from "./types";
 
 interface Props {
@@ -62,8 +63,8 @@ export default function PluginActivationPanel({
         Controls where each plugin's tools and branding turn on. Built-in
         hosts come from the plugin manifest; you can add your own (with an
         optional <code>:port</code>). Changes apply on the next message.
-        Click a plugin with the <span aria-hidden>▸</span> chevron to edit
-        its settings (API keys, connector status).
+        Expand a plugin to select MCP servers, override bearer tokens,
+        and edit its other settings.
       </p>
       {plugins.map((p) => (
         <PluginCard
@@ -99,7 +100,7 @@ function PluginCard({
 
   const extras = plugin.extra_hosts ?? [];
   const everywhere = plugin.host_patterns.includes("*");
-  const expandable = !!plugin.settings_schema;
+  const expandable = true; // Every plugin can bind a global MCP server.
 
   async function persist(next: string[]) {
     setBusy(true);
@@ -241,6 +242,9 @@ function PluginCard({
         </p>
       )}
 
+      {open && (
+        <PluginMCPSettings backendOrigin={backendOrigin} pluginName={plugin.name} onSaved={onSaved} />
+      )}
       {expandable && open && plugin.settings_schema && (
         <div
           style={{

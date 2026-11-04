@@ -35,7 +35,7 @@ export interface ConnectorEndpointStatus {
 export interface PluginConnectorStatus {
   id: string;
   // Aggregate: "ok" when at least one endpoint is reachable.
-  status: "ok" | "unauth" | "unreachable" | "not_configured" | "unknown";
+  status: "ok" | "unauth" | "unreachable" | "not_configured" | "unknown" | "disabled";
   last_error: string | null;
   // Endpoint the last successful refresh used. For url_template
   // connectors ("{host}/mcp") tool calls re-derive the URL from the

@@ -60,6 +60,7 @@ def synth_tool_spec(
     token_provider: Callable[[str | None], str | None],
     host_pattern: str | list[str] | None,
     visibility_check: Callable[[], bool] | None,
+    call_check: Callable[[ToolCtx], bool] | None = None,
 ) -> ToolSpec:
     """Build a ToolSpec that proxies one remote MCP tool.
 
@@ -76,6 +77,10 @@ def synth_tool_spec(
     local_name = f"{tool_prefix}{remote_tool.name}"
 
     async def _handler(args: dict[str, Any], ctx: ToolCtx) -> dict[str, Any]:
+        if (call_check is not None and not call_check(ctx)) or (
+            visibility_check is not None and not visibility_check()
+        ):
+            return {"ok": False, "error": "mcp_disabled", "message": "MCP binding is disabled, stale, or unavailable for this user/host. Refresh its tool list."}
         url = url_provider(ctx.host)
         # Token follows the resolved URL's host (per-instance keys),
         # not the page host — though for template connectors they agree.
@@ -94,14 +99,17 @@ def synth_tool_spec(
                 url, token, remote_tool.name, args or {}
             )
         except Exception as exc:
+            # HTTP/client errors may echo Authorization headers. Catalog-bound
+            # credentials remain write-only even on failed tool calls.
+            message = "MCP tool call failed; check the endpoint and credentials." if call_check is not None else str(exc)
             _logger.warning(
                 "mcp call failed: connector=%s tool=%s err=%s",
-                connector_id, remote_tool.name, exc,
+                connector_id, remote_tool.name, message,
             )
             return {
                 "ok": False,
                 "error": "mcp_call_failed",
-                "message": str(exc),
+                "message": message,
                 "connector": connector_id,
                 "remote_tool": remote_tool.name,
             }

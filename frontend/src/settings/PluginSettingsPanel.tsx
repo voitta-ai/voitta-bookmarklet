@@ -78,6 +78,12 @@ export default function PluginSettingsPanel({
     await saveSettings(backendOrigin, { dotted: { [field.key]: raw } });
   }
 
+  function savedFlag(field: PluginSchemaField): unknown {
+    const parts = field.key.split(".");
+    parts[parts.length - 1] = `has_${parts[parts.length - 1]}`;
+    return getDotted(snapshot as unknown as Record<string, unknown>, parts.join("."));
+  }
+
   // status_probe = "mcp:<connector_id>" — pull the matching connector.
   const probed = (() => {
     if (!schema.status_probe || !schema.status_probe.startsWith("mcp:")) return null;
@@ -97,11 +103,16 @@ export default function PluginSettingsPanel({
             field={f}
             hosts={hosts}
             value={valueOf(f)}
+            saved={savedFlag(f)}
             onChange={(v) => patchField(f, v)}
             endpoints={probed?.endpoints ?? []}
             onRefreshHost={onRefreshHost}
             hostBusy={hostBusy}
           />
+        ) : f.type === "secret" ? (
+          <SecretEditor key={f.key} label={f.label} placeholder={f.placeholder}
+            saved={!!savedFlag(f) || !!valueOf(f)} help={f.help}
+            onSave={(v) => patchField(f, v)} />
         ) : (
           <FieldRow
             key={f.key}
@@ -210,6 +221,7 @@ function PerHostSecretRows({
   field,
   hosts,
   value,
+  saved,
   onChange,
   endpoints,
   onRefreshHost,
@@ -218,7 +230,8 @@ function PerHostSecretRows({
   field: PluginSchemaField;
   hosts: string[];
   value: unknown;
-  onChange: (v: unknown) => void;
+  saved: unknown;
+  onChange: (v: unknown) => Promise<void>;
   endpoints: ConnectorEndpointStatus[];
   onRefreshHost?: (host: string) => void;
   hostBusy: Record<string, boolean>;
@@ -227,18 +240,24 @@ function PerHostSecretRows({
     value && typeof value === "object" ? { ...(value as Record<string, string>) } : {};
   // Show a row per activation host, plus any saved key whose host was
   // since removed from the activation list (so it stays deletable).
+  const flags: Record<string, boolean> = saved && typeof saved === "object"
+    ? saved as Record<string, boolean> : {};
   const rows = [...hosts];
-  for (const h of Object.keys(map)) {
+  for (const h of [...Object.keys(map), ...Object.keys(flags)]) {
     if (!rows.includes(h)) rows.push(h);
   }
 
-  function setKey(host: string, raw: string) {
-    const next = { ...map };
-    if (raw.trim() === "") delete next[host];
-    else next[host] = raw;
-    // One dotted patch carrying the whole map — host strings contain
-    // dots, so per-entry dotted paths would split into bogus nesting.
-    onChange(Object.keys(next).length ? next : null);
+  async function setKey(host: string, raw: string) {
+    // Redacted MCP maps accept a partial host patch, preserving every
+    // other host's secret. Non-MCP legacy maps still use full replacement.
+    if (saved !== undefined) {
+      await onChange({ [host]: raw });
+    } else {
+      const next = { ...map };
+      if (raw.trim() === "") delete next[host];
+      else next[host] = raw;
+      await onChange(Object.keys(next).length ? next : null);
+    }
   }
 
   if (rows.length === 0) {
@@ -252,7 +271,6 @@ function PerHostSecretRows({
     <div style={{ marginTop: 12 }}>
       <label>{field.label}</label>
       {rows.map((host) => {
-        const id = `pfh-${(field.key + host).replace(/[^a-zA-Z0-9]+/g, "-")}`;
         const ep = endpoints.find((e) => hostOf(e.url) === hostOf(host));
         const busy = !!hostBusy[host];
         return (
@@ -272,19 +290,8 @@ function PerHostSecretRows({
               >
                 {host}
               </code>
-              <input
-                id={id}
-                className="secret"
-                type="text"
-                spellCheck={false}
-                autoComplete="off"
-                autoCorrect="off"
-                autoCapitalize="off"
-                placeholder={field.placeholder}
-                value={map[host] ?? ""}
-                onChange={(e) => setKey(host, e.currentTarget.value)}
-                style={{ flex: 1 }}
-              />
+              <SecretEditor label={`${field.label} for ${host}`} saved={!!flags[host] || !!map[host]}
+                placeholder={field.placeholder} onSave={(value) => setKey(host, value)} />
               {onRefreshHost && (
                 <button
                   type="button"
@@ -302,6 +309,40 @@ function PerHostSecretRows({
         );
       })}
       {field.help && <p className="muted">{field.help}</p>}
+    </div>
+  );
+}
+
+function SecretEditor({ label, saved, placeholder, help, onSave }: {
+  label: string;
+  saved: boolean;
+  placeholder?: string;
+  help?: string;
+  onSave: (value: string) => Promise<void>;
+}) {
+  const [draft, setDraft] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  async function persist(value: string) {
+    setBusy(true); setError("");
+    try { await onSave(value); setDraft(""); }
+    catch { setError("Could not save the token. Please retry."); }
+    finally { setBusy(false); }
+  }
+  return (
+    <div style={{ flex: 1, minWidth: 0, marginTop: 8 }}>
+      <label style={{ display: "grid", gap: 4, fontSize: 12 }}>{label}
+        <input type="text" className="secret" autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck={false}
+          value={draft} disabled={busy}
+          placeholder={saved ? "Token saved — leave blank to keep" : placeholder}
+          onChange={(e) => setDraft(e.target.value)} />
+      </label>
+      <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
+        <button type="button" disabled={busy || !draft.trim()} onClick={() => void persist(draft.trim())}>Save token</button>
+        {saved && <button type="button" disabled={busy} onClick={() => void persist("")}>Clear token</button>}
+      </div>
+      {help && <p className="muted">{help}</p>}
+      {error && <p role="alert">{error}</p>}
     </div>
   );
 }
@@ -355,6 +396,7 @@ const STATUS_LABELS: Record<string, string> = {
   unreachable: "Unreachable",
   not_configured: "Not configured",
   unknown: "Not probed yet",
+  disabled: "Disabled",
 };
 
 function ConnectorStatusRow({

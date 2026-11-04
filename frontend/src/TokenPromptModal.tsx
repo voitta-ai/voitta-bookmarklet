@@ -62,11 +62,12 @@ export default function TokenPromptModal() {
       <input
         ref={inputRef}
         className="token-inline-input secret"
-        type="password"
+        type="text"
         value={value}
         placeholder="sk-ant-oat01-…"
         autoComplete="off"
         autoCorrect="off"
+        autoCapitalize="off"
         spellCheck={false}
         onChange={(e) => setValue(e.target.value)}
         onKeyDown={(e) => {

@@ -1,0 +1,89 @@
+/* Shared-server editor. All surfaces follow the widget's theme tokens. */
+.mcp-settings { font: 13px/1.5 var(--voitta-font-sans); min-width: 0; }
+.mcp-heading { margin-bottom: 8px; }
+.mcp-heading h3 { margin: 0; font-size: 18px; letter-spacing: -0.02em; }
+.mcp-heading p { margin: 3px 0 0; color: var(--voitta-text-muted); }
+.mcp-intro { color: var(--voitta-text-muted); margin: 0 0 20px; font-size: 12px; }
+.mcp-card {
+  border: 1px solid var(--voitta-border);
+  border-radius: 10px;
+  background: var(--voitta-surface);
+  padding: 18px;
+  margin-bottom: 16px;
+  min-width: 0;
+}
+.mcp-card-heading { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 20px; }
+.mcp-card-heading > div { flex: 1; min-width: 0; }
+.mcp-card-heading strong { font-size: 15px; }
+.mcp-endpoint { margin: 4px 0 0; color: var(--voitta-text-muted); font-size: 11px; overflow-wrap: anywhere; }
+.mcp-badge {
+  display: inline-block;
+  font-size: 10px;
+  line-height: 1.6;
+  font-weight: 500;
+  color: var(--voitta-text-muted);
+  background: var(--voitta-bg);
+  border: 1px solid var(--voitta-border);
+  padding: 2px 7px;
+  border-radius: 20px;
+  white-space: nowrap;
+}
+.view-settings .mcp-settings input:not([type="checkbox"]),
+.view-settings .mcp-settings select {
+  box-sizing: border-box;
+  width: 100%; min-width: 0;
+  min-height: 38px;
+  padding: 8px 10px;
+  border: 1px solid var(--voitta-border);
+  border-radius: 6px;
+  background: var(--voitta-bg);
+  color: var(--voitta-text);
+  font: 400 13px/1.4 var(--voitta-font-sans);
+  transition: border-color 120ms, box-shadow 120ms;
+}
+.mcp-settings input::placeholder { color: var(--voitta-text-faint); opacity: 1; }
+.mcp-settings input:disabled, .mcp-settings select:disabled { opacity: 0.55; }
+.view-settings .mcp-settings label { margin-top: 0; font-size: 12px; letter-spacing: 0; }
+.mcp-settings button {
+  padding: 8px 12px;
+  min-height: 34px;
+  border-radius: 6px;
+  border: 1px solid var(--voitta-border);
+  background: var(--voitta-bg);
+  color: var(--voitta-text);
+  font: 500 12px/1.4 var(--voitta-font-sans);
+  cursor: pointer;
+  transition: background 120ms, border-color 120ms;
+}
+.mcp-settings button:hover:not(:disabled) { border-color: var(--voitta-text-muted); background: var(--voitta-surface); }
+.mcp-settings button:focus-visible, .mcp-settings summary:focus-visible {
+  outline: 2px solid var(--voitta-accent); outline-offset: 3px;
+}
+.mcp-settings button:disabled { opacity: 0.45; cursor: not-allowed; }
+.view-settings .mcp-settings .save-btn { font-size: 12px; padding: 8px 14px; }
+.mcp-settings .save-btn:hover:not(:disabled) { background: var(--voitta-accent-hover); }
+.mcp-auth-section { border-top: 1px solid var(--voitta-divider); padding-top: 14px; margin-top: 16px; }
+.mcp-help { font-size: 11px; color: var(--voitta-text-muted); margin: 7px 0 12px; }
+.mcp-note { font-size: 11px; color: var(--voitta-text-muted); padding-left: 10px; border-left: 2px solid var(--voitta-border); margin: 12px 0; }
+.view-settings .mcp-settings .mcp-check {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  font-size: 12px; font-weight: 400; margin: 8px 0;
+}
+.mcp-check input[type="checkbox"] { margin: 0; accent-color: var(--voitta-accent); width: 15px; height: 15px; }
+.view-settings .mcp-settings .mcp-enabled { margin: 16px 0; }
+.mcp-settings summary { cursor: pointer; color: var(--voitta-text-muted); font-size: 12px; }
+.mcp-settings details[open] > summary { margin-bottom: 12px; }
+.mcp-advanced { margin: 16px 0; }
+.mcp-plugin-list { border-top: 1px solid var(--voitta-border); padding-top: 16px; margin-top: 16px; }
+.mcp-plugin-list > summary { color: var(--voitta-text); font-weight: 600; }
+.mcp-plugin-list > summary .mcp-badge { margin-left: 6px; }
+.mcp-binding {
+  background: var(--voitta-bg);
+  border: 1px solid var(--voitta-border);
+  border-radius: 8px; padding: 12px; margin: 12px 0 0; min-width: 0;
+}
+.mcp-binding legend { font-size: 12px; font-weight: 600; padding: 0 5px; }
+.view-settings .mcp-settings .mcp-token-mode { display: grid; gap: 4px; margin: 12px 0; }
+.mcp-plugin-settings { margin-top: 16px; }
+.mcp-settings [role="alert"] { color: var(--voitta-error-fg); font-size: 12px; }
+@media (max-width: 480px) { .mcp-card { padding: 12px; } }

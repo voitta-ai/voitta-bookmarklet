@@ -16,6 +16,8 @@ import { useCallback, useEffect, useState } from "react";
 import GlobalSettings from "./settings/GlobalSettings";
 import PluginActivationPanel from "./settings/PluginActivationPanel";
 import PluginSettingsPanel from "./settings/PluginSettingsPanel";
+import RoutinesPanel from "./settings/RoutinesPanel";
+import MCPSettingsPanel from "./settings/MCPSettingsPanel";
 import type {
   CustomPanelProps,
   PluginConnectorStatus,
@@ -25,7 +27,12 @@ import type {
 interface Props {
   backendOrigin: string;
   onClose: () => void;
+  // Open on a given tab (e.g. the header alarm clock → Routines).
+  initialTab?: string;
+  routineFocus?: { id: string | null; createNew: boolean };
 }
+
+export const ROUTINES_TAB = "__routines__";
 
 // Eager-globbed custom settings panels. Each plugin's
 // ``frontend/settings-panel.tsx`` exports a default React component
@@ -42,6 +49,7 @@ const CUSTOM_PANEL_MODULES = import.meta.glob<CustomPanelModule>(
 // Tab id for the fixed "Plugins" (activation) tab. Namespaced so a
 // plugin literally named "plugins" can't shadow it.
 const ACTIVATION_TAB = "__activation__";
+const MCP_TAB = "__mcp__";
 
 // relDir is the plugin's path relative to plugins/ root (e.g. "google/drive").
 // Falls back to bare plugin name for flat plugins without a rel_dir from the API.
@@ -55,9 +63,9 @@ function findCustomPanel(relDir: string) {
   return null;
 }
 
-export default function SettingsView({ backendOrigin, onClose }: Props) {
+export default function SettingsView({ backendOrigin, onClose, initialTab, routineFocus }: Props) {
   const [plugins, setPlugins] = useState<PluginInfo[]>([]);
-  const [activeTab, setActiveTab] = useState<string>("global");
+  const [activeTab, setActiveTab] = useState<string>(initialTab ?? "global");
   const [refreshBusy, setRefreshBusy] = useState<Record<string, boolean>>({});
   const [loadErr, setLoadErr] = useState<string | null>(null);
 
@@ -140,7 +148,17 @@ export default function SettingsView({ backendOrigin, onClose }: Props) {
             refreshBusy={refreshBusy}
           />
         )}
-        {activeTab !== "global" && activeTab !== ACTIVATION_TAB && (
+        {activeTab === MCP_TAB && (
+          <MCPSettingsPanel backendOrigin={backendOrigin} plugins={plugins} onSaved={fetchPlugins} />
+        )}
+        {activeTab === ROUTINES_TAB && (
+          <RoutinesPanel
+            backendOrigin={backendOrigin}
+            focusId={routineFocus?.id}
+            createNew={routineFocus?.createNew}
+          />
+        )}
+        {activeTab !== "global" && activeTab !== ACTIVATION_TAB && activeTab !== ROUTINES_TAB && activeTab !== MCP_TAB && (
           <PluginTabBody
             pluginName={activeTab}
             plugin={tabbedPlugins.find((p) => p.name === activeTab)}
@@ -185,6 +203,8 @@ function TabStrip({
   const tabs: { id: string; label: string }[] = [
     { id: "global", label: "Global" },
     { id: ACTIVATION_TAB, label: "Plugins" },
+    { id: MCP_TAB, label: "MCP" },
+    { id: ROUTINES_TAB, label: "Routines" },
     ...plugins.map((p) => ({ id: p.name, label: p.agent_name || p.name })),
   ];
   return (
@@ -193,6 +213,7 @@ function TabStrip({
       role="tablist"
       style={{
         display: "flex",
+        flexWrap: "wrap",
         gap: 4,
         borderBottom: "1px solid var(--voitta-border, #d1d5db)",
         marginBottom: 4,

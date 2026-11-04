@@ -255,19 +255,23 @@ from app.routes.google import router as google_router
 from app.routes.html_report import router as html_report_router
 from app.routes.models import router as models_router
 from app.routes.plugins import router as plugins_router
+from app.routes.mcp_catalog import router as mcp_catalog_router
 from app.routes.reports import router as reports_router
 from app.routes.settings import router as settings_router
 from app.routes.workspace import router as workspace_router
 from app.routes.agent_sdk import router as agent_sdk_router
 from app.routes.projects import router as projects_router
+from app.routes.routines import router as routines_router
 
 app.include_router(auth_router)
 app.include_router(projects_router)
+app.include_router(routines_router)
 app.include_router(reports_router)
 app.include_router(html_report_router)
 app.include_router(settings_router)
 app.include_router(models_router)
 app.include_router(plugins_router)
+app.include_router(mcp_catalog_router)
 app.include_router(google_router)
 app.include_router(workspace_router)
 app.include_router(agent_sdk_router)

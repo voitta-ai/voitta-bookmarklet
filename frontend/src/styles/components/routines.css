@@ -1,0 +1,257 @@
+/* ─── routines: header alarm clock, popover, editor, chime tag ─────────── */
+:host,
+.root {
+  --voitta-alarm:      #d97706; /* amber-600 */
+  --voitta-alarm-tint: rgba(217, 119, 6, 0.14);
+  --voitta-alarm-ok:   #16a34a;
+  --voitta-alarm-miss: #dc2626;
+}
+:host([data-theme="dark"]),
+.root[data-theme="dark"] {
+  --voitta-alarm:      #fbbf24;
+  --voitta-alarm-tint: rgba(251, 191, 36, 0.16);
+  --voitta-alarm-ok:   #4ade80;
+  --voitta-alarm-miss: #f87171;
+}
+@media (prefers-color-scheme: dark) {
+  :host([data-theme="auto"]),
+  .root[data-theme="auto"] {
+    --voitta-alarm:      #fbbf24;
+    --voitta-alarm-tint: rgba(251, 191, 36, 0.16);
+    --voitta-alarm-ok:   #4ade80;
+    --voitta-alarm-miss: #f87171;
+  }
+}
+
+header .alarm {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+}
+header .alarm-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 5px;
+  opacity: 0.55;
+}
+header .alarm-btn:hover { opacity: 1; }
+header .alarm-btn.armed {
+  opacity: 1;
+  color: var(--voitta-alarm);
+  background: var(--voitta-alarm-tint);
+}
+.clock-svg .face,
+.clock-svg .hands { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.clock-svg .bell { fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linejoin: round; }
+header .alarm-btn.armed .clock-svg .bell { fill: currentColor; }
+header .alarm-next {
+  font: 600 11px/1 var(--voitta-font-sans);
+  font-variant-numeric: tabular-nums;
+}
+header .alarm-dot {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--voitta-alarm-miss);
+  box-shadow: 0 0 0 1.5px var(--voitta-header-bg);
+}
+header .alarm-btn.ringing .clock-svg {
+  animation: voitta-ring 0.5s ease-in-out 5;
+  transform-origin: 50% 20%;
+}
+@keyframes voitta-ring {
+  0%, 100% { transform: rotate(0); }
+  20% { transform: rotate(-16deg); }
+  40% { transform: rotate(14deg); }
+  60% { transform: rotate(-10deg); }
+  80% { transform: rotate(6deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  header .alarm-btn.ringing .clock-svg { animation: none; }
+}
+
+/* popover */
+header .alarm-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: -40px;
+  z-index: 9999;
+  width: 290px;
+  max-width: calc(100vw - 32px);
+  max-height: 420px;
+  overflow-y: auto;
+  background: var(--voitta-picker-bg);
+  color: var(--voitta-picker-fg);
+  border: 1px solid var(--voitta-picker-rule);
+  border-radius: 10px;
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.2);
+  padding: 8px;
+  font: 12px/1.35 var(--voitta-font-sans);
+}
+.alarm-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 4px;
+}
+.alarm-head { color: var(--voitta-alarm); padding-bottom: 8px; border-bottom: 1px solid var(--voitta-picker-rule); margin-bottom: 4px; }
+.alarm-title { flex: 1; font-weight: 600; color: var(--voitta-picker-fg); }
+.alarm-label { color: var(--voitta-text-muted); width: 52px; flex-shrink: 0; }
+.alarm-row select {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  padding: 3px 6px;
+  border: 1px solid var(--voitta-picker-rule);
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+}
+.alarm-switch {
+  position: relative;
+  width: 34px;
+  height: 19px;
+  border-radius: 999px;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+  background: var(--voitta-header-btn-bg-hover);
+  transition: background 0.15s;
+}
+.alarm-switch span {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  transition: transform 0.15s;
+}
+.alarm-switch.on { background: var(--voitta-alarm); }
+.alarm-switch.on span { transform: translateX(15px); }
+.alarm-switch:disabled { opacity: 0.4; cursor: default; }
+.alarm-sec {
+  margin: 8px 4px 2px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--voitta-text-muted);
+}
+.alarm-tz { text-transform: none; letter-spacing: 0; font-weight: 400; }
+.alarm-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 4px;
+  border-radius: 5px;
+}
+.alarm-item:hover { background: var(--voitta-picker-hover); }
+.alarm-item.muted { color: var(--voitta-text-muted); font-style: italic; }
+.alarm-item.ok .alarm-icon { color: var(--voitta-alarm-ok); }
+.alarm-item.miss .alarm-text { color: var(--voitta-alarm-miss); }
+.alarm-item.other { color: var(--voitta-text-muted); }
+.alarm-icon { width: 16px; text-align: center; flex-shrink: 0; }
+.alarm-time { font-variant-numeric: tabular-nums; font-weight: 600; flex-shrink: 0; }
+.alarm-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.alarm-rel { color: var(--voitta-text-muted); font-size: 11px; flex-shrink: 0; }
+.alarm-empty { padding: 10px 6px; color: var(--voitta-text-muted); display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+.alarm-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--voitta-picker-rule);
+}
+.alarm-link {
+  border: none;
+  background: none;
+  padding: 3px 4px;
+  color: var(--voitta-link-fg);
+  font: inherit;
+  cursor: pointer;
+  border-radius: 5px;
+}
+.alarm-link:hover { background: var(--voitta-picker-hover); }
+.alarm-hint { font-size: 10px; color: var(--voitta-text-faint); }
+.alarm-err { padding: 4px; color: var(--voitta-alarm-miss); font-size: 11px; }
+
+/* chime tag on a user bubble */
+.msg.user .chime-tag {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: fit-content;
+  margin-bottom: 4px;
+  padding: 1px 7px 1px 5px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--voitta-alarm);
+  background: var(--voitta-alarm-tint);
+}
+
+/* settings → routines editor */
+.routines-bar { display: flex; gap: 6px; align-items: center; margin: 10px 0; }
+.routines-bar select { flex: 1; min-width: 0; }
+.routines-inline-clock { color: var(--voitta-alarm); vertical-align: -1px; }
+.routine-card { border: 1px solid var(--voitta-border); border-radius: 8px; padding: 10px 12px 12px; }
+.view-settings .routine-card input.invalid,
+.view-settings .chime input.invalid { border-color: var(--voitta-alarm-miss); }
+.chime {
+  margin-top: 12px;
+  padding: 8px 10px 10px;
+  border-radius: 8px;
+  background: var(--voitta-surface);
+  border-left: 3px solid var(--voitta-alarm);
+}
+.chime-h { display: flex; justify-content: space-between; align-items: center; font-weight: 600; font-size: 12px; }
+.chime-del {
+  border: none;
+  background: none;
+  color: var(--voitta-text-muted);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 2px 4px;
+}
+.chime-del:hover { color: var(--voitta-alarm-miss); }
+.chime-modes { display: flex; gap: 14px; margin: 6px 0; }
+.chime-line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 4px 0; font-size: 12px; }
+.view-settings .chime-line input[type="number"] { width: 64px; }
+.view-settings .chime-line input[type="time"] {
+  width: auto;
+  padding: 4px 6px;
+  border: 1px solid var(--voitta-border);
+  border-radius: 5px;
+  background: var(--voitta-bg);
+  color: var(--voitta-text);
+  font: inherit;
+}
+.chime-time { display: inline-flex; align-items: center; }
+.chime-days { display: flex; align-items: center; gap: 3px; margin: 6px 0; }
+.chime-days .day {
+  width: 24px;
+  height: 22px;
+  border-radius: 5px;
+  border: 1px solid var(--voitta-border);
+  background: transparent;
+  color: var(--voitta-text-muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+.chime-days .day.on { background: var(--voitta-alarm-tint); border-color: var(--voitta-alarm); color: var(--voitta-text); font-weight: 600; }
+.chime-days .muted { margin-left: 6px; font-size: 11px; }
+.routines-row { margin-top: 10px; }
+.routine-preview { margin-top: 12px; font-size: 12px; }
+.routine-preview-h { font-weight: 600; color: var(--voitta-text-muted); margin-bottom: 4px; }
+.routine-preview-row { display: flex; gap: 6px; align-items: baseline; padding: 1px 0; }
+.routine-preview-row .mono { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.routine-preview-p { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--voitta-text-muted); }

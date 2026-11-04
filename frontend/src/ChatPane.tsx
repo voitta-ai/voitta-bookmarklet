@@ -6,13 +6,14 @@
 
 import {
   type IStep,
+  currentThreadIdState,
   messagesState,
   useChatData,
   useChatInteract,
   useChatMessages,
 } from "@chainlit/react-client";
 import { useEffect, useMemo, useState } from "react";
-import { useSetRecoilState } from "recoil";
+import { useRecoilValue, useSetRecoilState } from "recoil";
 import MessageList from "./chat/MessageList";
 import Composer from "./chat/Composer";
 import QuestionCard from "./chat/QuestionCard";
@@ -20,6 +21,7 @@ import TokenPromptModal from "./TokenPromptModal";
 import type { ImageAttachment } from "./lib/image-attach";
 import { encodeFiles } from "./lib/attachments";
 import { useAuthConnect } from "./lib/useAuthConnect";
+import { useRoutineScheduler } from "./lib/useRoutineScheduler";
 
 // One row of /api/agent_sdk/sessions/{id}/messages (see
 // backend/app/services/agent_sdk/sessions.py:_transcript_rows).
@@ -209,6 +211,17 @@ export default function ChatPane({
     const qs = props?.questions;
     return Array.isArray(qs) && qs.length ? (qs as never[]) : null;
   }, [askUser, elements]);
+
+  // Routines: fire the armed routine's chimes into this chat while idle.
+  // Busy (or a pending question) at the moment a chime is due drops it.
+  const chainlitThreadId = useRecoilValue(currentThreadIdState);
+  useRoutineScheduler({
+    backendOrigin,
+    chatKey: sdkResumeSessionId ? `sdk:${sdkResumeSessionId}` : chainlitThreadId ?? null,
+    busy,
+    asking: !!askUser,
+    send: (text) => sendMessage({ output: text, name: "user", type: "user_message" }, []),
+  });
 
   async function onAttach(files: File[]) {
     const encoded = await encodeFiles(files);

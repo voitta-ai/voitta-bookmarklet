@@ -16,6 +16,7 @@ import header from "./components/header.css?inline";
 import messages from "./components/messages.css?inline";
 import composer from "./components/composer.css?inline";
 import settings from "./components/settings.css?inline";
+import mcpSettings from "./components/mcp-settings.css?inline";
 import logs from "./components/logs.css?inline";
 import artifacts from "./components/artifacts.css?inline";
 import reports from "./components/reports.css?inline";
@@ -25,6 +26,7 @@ import report from "./components/report.css?inline";
 import workspace from "./components/workspace.css?inline";
 import tokenModal from "./components/token-modal.css?inline";
 import questionCard from "./components/question-card.css?inline";
+import routines from "./components/routines.css?inline";
 
 export const cssText = [
   tokens,
@@ -35,6 +37,7 @@ export const cssText = [
   messages,
   composer,
   settings,
+  mcpSettings,
   logs,
   artifacts,
   reports,
@@ -44,4 +47,5 @@ export const cssText = [
   workspace,
   tokenModal,
   questionCard,
+  routines,
 ].join("\n\n");

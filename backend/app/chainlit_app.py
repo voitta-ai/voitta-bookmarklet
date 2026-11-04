@@ -298,19 +298,18 @@ async def on_chat_start() -> None:
     # "why are MCP tools missing" from the log.
     try:
         import asyncio
-        from app.services.mcp.registry import MCP_CONNECTORS, refresh_all
+        from app.services.mcp.registry import list_connectors, refresh_all
         from app.tools.registry import registry as _tool_registry
-        for key, conn in MCP_CONNECTORS.items():
+        connectors = list_connectors()
+        for conn in connectors:
             logger.info(
                 "on_chat_start: connector=%r status=%r owned=%r",
-                key, conn.status, sorted(conn.owned_tool_names),
+                f"{conn.decl.plugin_name}:{conn.decl.id}", conn.status, sorted(conn.owned_tool_names),
             )
-        all_tools = list(_tool_registry._tools.keys())
+        all_tools = _tool_registry.names()
         logger.info("on_chat_start: total registered tools=%d: %s", len(all_tools), all_tools)
-        # Re-probe if connectors exist but none have synthesised tools.
-        if MCP_CONNECTORS and not any(
-            c.owned_tool_names for c in MCP_CONNECTORS.values()
-        ):
+        # Re-probe within this user's context, not process-global defaults.
+        if any(c.status == "unknown" for c in connectors):
             logger.info("on_chat_start: no MCP tools synthesised — triggering background refresh_all()")
             asyncio.create_task(refresh_all())
     except Exception:

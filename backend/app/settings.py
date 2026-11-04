@@ -195,11 +195,24 @@ def save_dotted(patches: dict[str, Any]) -> dict[str, Any]:
     are written verbatim.
     """
     current = user_settings.read()
+    from app.services.mcp.registry import MCP_CONNECTORS, _dotted_get
+    token_maps = {c.decl.token_map_setting for c in MCP_CONNECTORS.values() if c.decl.token_map_setting}
     for path, value in patches.items():
         if not isinstance(path, str) or not path:
             continue
         if value is None or value == "":
             _dotted_delete(current, path)
+        elif path in token_maps and isinstance(value, dict):
+            # Write-only host credentials: a UI sends only edited rows, never
+            # the redacted saved map. Keep untouched hosts and permit removal.
+            existing = _dotted_get(current, path)
+            merged = dict(existing) if isinstance(existing, dict) else {}
+            for host, token in value.items():
+                if token is None or token == "":
+                    merged.pop(host, None)
+                elif isinstance(token, str):
+                    merged[host] = token
+            _dotted_set(current, path, merged)
         else:
             _dotted_set(current, path, value)
     user_settings.write(current)
@@ -243,6 +256,7 @@ def redacted_for_wire(s: UserSettings | None = None) -> dict[str, Any]:
     blob = raw_blob()
     keys = s.get("api_keys") or {}
     g = _redact_google_oauth(blob.get("googleOAuth"))
+    from app.services.mcp.catalog import redact_plugins
     return {
         "provider": s.get("provider", "anthropic"),
         "models": dict(s.get("models") or _DEFAULT_MODELS),
@@ -253,7 +267,7 @@ def redacted_for_wire(s: UserSettings | None = None) -> dict[str, Any]:
         # codex has no saved key: "has key" means the codex CLI is signed in.
         "has_api_keys": {**{p: bool(v) for p, v in keys.items()}, "codex": _codex_signed_in()},
         "googleOAuth": g,
-        "plugins": dict(blob.get("plugins") or {}),
+        "plugins": redact_plugins(blob.get("plugins")),
         # Claude (subscription) brain: whether the Claude Code engine is
         # installed (gates the selector option) and whether this user has a
         # working-or-stored token (drives the "connected" hint). Token status

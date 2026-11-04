@@ -4,6 +4,7 @@
 import { useEffect, useState } from "react";
 import { type IMessageElement, type IStep } from "@chainlit/react-client";
 import Markdown from "./Markdown";
+import { parseChimeMessage } from "../lib/routines";
 import BridgeImg from "./BridgeImg";
 
 // ---- image zoom ----------------------------------------------------------
@@ -70,7 +71,7 @@ export default function StepView({ step, elements, backendOrigin }: Props) {
             ))}
           </div>
         )}
-        {step.output ?? null}
+        <UserText text={step.output ?? ""} />
       </div>
     );
   }
@@ -164,4 +165,28 @@ function ElementView({
     return null;
   }
   return null;
+}
+
+// A routine chime arrives as "⏰ <routine> · HH:MM\n<prompt>": show the
+// header as a small tag so it reads differently from something typed.
+function UserText({ text }: { text: string }) {
+  const chime = parseChimeMessage(text);
+  if (!chime) return <>{text || null}</>;
+  return (
+    <>
+      <span className="chime-tag" title="Sent by a routine">
+        <AlarmGlyph /> {chime.label}
+      </span>
+      {chime.body}
+    </>
+  );
+}
+
+function AlarmGlyph() {
+  return (
+    <svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true">
+      <circle cx="8" cy="9" r="5" fill="none" stroke="currentColor" strokeWidth="1.5" />
+      <path d="M8 6.5V9l1.8 1.2M2.5 3.5l2-1.5M13.5 3.5l-2-1.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  );
 }

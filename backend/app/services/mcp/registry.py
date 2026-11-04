@@ -10,8 +10,8 @@ Lifecycle:
 * Plugin loader calls :func:`register_connector` once per declaration
   it finds in ``manifest.json``. No network at this point.
 * The first call to :func:`refresh_all` (FastAPI startup, or explicit
-  ``POST /api/plugins/<name>/refresh``) opens each connector, lists
-  tools, and synthesises ToolSpecs into the shared registry.
+  ``POST /api/plugins/<name>/refresh``) opens the current user's effective
+  catalog bindings and synthesises ToolSpecs into an identity-scoped overlay.
 * Subsequent refreshes re-list and replace; we remove only the
   connector's own synthesised tools so we don't disturb local Python
   tools the plugin also registered.
@@ -72,6 +72,8 @@ class MCPServerDecl:
     url: str | None = None
     # Future: transport variants. Today only "streamable-http".
     transport: str = "streamable-http"
+    # Set only on a user-scoped catalog binding, never on manifest defaults.
+    catalog_id: str | None = None
 
     @classmethod
     def from_manifest_entry(
@@ -193,20 +195,22 @@ class MCPConnector:
     # Per-endpoint probe results from the last refresh, in candidate
     # order (explicit URL, manifest hosts, user extra hosts).
     endpoints: list[EndpointStatus] = field(default_factory=list)
-    # Names of synthetic ToolSpecs we own in the global registry.
+    # Names of synthetic ToolSpecs we own in this user's tool overlay.
     # Tracked separately so a refresh can remove only ours.
     owned_tool_names: set[str] = field(default_factory=set)
     # The first endpoint the last refresh reached. Doubles as the
     # fallback endpoint for host-less callers (the ``vre://`` ref
     # resolver runs inside script execution with no page in scope).
     active_url: str | None = None
+    owner: str | None = None
+    catalog_signature: str | None = None
 
 
 # -- module-global registry --------------------------------------------------
 
-# Populated by the plugin loader at startup. Keyed by
-# ``"<plugin_name>:<connector_id>"`` so a plugin can declare multiple
-# servers without collision.
+# Manifest prototypes populated by the plugin loader at startup. Runtime
+# states live in catalog._STATES, never here. Keyed by
+# ``"<plugin_name>:<connector_id>"``.
 MCP_CONNECTORS: dict[str, MCPConnector] = {}
 
 
@@ -235,14 +239,13 @@ def register_connector(decl: MCPServerDecl) -> MCPConnector:
 
 
 def get_connector(plugin_name: str, connector_id: str) -> MCPConnector | None:
-    return MCP_CONNECTORS.get(_key(plugin_name, connector_id))
+    return next((c for c in list_connectors(plugin_name) if c.decl.id == connector_id), None)
 
 
 def list_connectors(plugin_name: str | None = None) -> list[MCPConnector]:
-    """List connectors, optionally filtered to one plugin."""
-    if plugin_name is None:
-        return list(MCP_CONNECTORS.values())
-    return [c for c in MCP_CONNECTORS.values() if c.decl.plugin_name == plugin_name]
+    """List the current user's effective catalog bindings."""
+    from . import catalog
+    return catalog.list_connectors(plugin_name)
 
 
 def unregister_plugin(plugin_name: str) -> None:
@@ -322,6 +325,10 @@ def endpoint_for(conn: MCPConnector, host: str | None = None) -> str | None:
     The last leg keeps host-less callers working (the vre:// resolver,
     background jobs).
     """
+    if conn.decl.catalog_id:
+        from . import catalog
+        if not catalog.connector_current(conn):
+            return None
     explicit = _read_url(conn.decl)
     if explicit:
         return explicit
@@ -394,6 +401,10 @@ def token_for(decl: MCPServerDecl, url_or_host: str | None = None) -> str | None
     host of the URL being CALLED, not the page host — each instance
     mints its own keys.
     """
+    from . import catalog
+    overridden, token = catalog.token_override(decl)
+    if overridden:
+        return token
     if decl.token_map_setting and url_or_host:
         try:
             mapping = _dotted_get(user_settings.read(), decl.token_map_setting)
@@ -423,8 +434,10 @@ def _drop_owned_tools(conn: MCPConnector) -> None:
     today has no remove() — kept the abstraction surface minimal.
     Touching ``_tools`` here is intentional and bounded to this file.
     """
+    from . import catalog
+    owned = catalog._TOOLS.get(conn.owner, {})
     for name in list(conn.owned_tool_names):
-        _tool_registry._tools.pop(name, None)
+        owned.pop(name, None)
     conn.owned_tool_names.clear()
     conn.tool_names = []
 
@@ -443,7 +456,7 @@ def _host_pattern_for(decl: MCPServerDecl) -> str | list[str] | None:
     matcher OR's them.
     """
     pats = [p for p in decl.host_patterns if isinstance(p, str) and p]
-    if not pats:
+    if not pats or "*" in pats:
         return None
     return pats[0] if len(pats) == 1 else pats
 
@@ -455,11 +468,11 @@ async def _probe_endpoint(decl: MCPServerDecl, url: str) -> EndpointStatus:
     except Exception as exc:
         msg = str(exc) or type(exc).__name__
         status = "unauth" if _is_auth_error(exc, msg) else "unreachable"
-        _logger.warning(
-            "mcp probe failed: connector=%s:%s url=%s err=%s",
-            decl.plugin_name, decl.id, url, msg,
-        )
-        return EndpointStatus(url=url, status=status, last_error=msg)
+        # Remote exceptions can echo Authorization headers. Status details must
+        # not disclose credentials in the API or logs.
+        safe_error = "MCP authentication failed" if status == "unauth" else "MCP endpoint unavailable"
+        _logger.warning("mcp probe failed: connector=%s:%s status=%s", decl.plugin_name, decl.id, status)
+        return EndpointStatus(url=url, status=status, last_error=safe_error if decl.catalog_id else msg)
     exposed = [t for t in listed if _is_exposed(decl, t.name)]
     return EndpointStatus(
         url=url,
@@ -476,6 +489,11 @@ def _finalize(conn: MCPConnector) -> MCPConnector:
     name is the same either way and the handler routes to the right
     instance per page host at call time.
     """
+    from . import catalog
+    if not catalog.connector_current(conn):
+        _drop_owned_tools(conn)
+        conn.status = "disabled"
+        return conn
     decl = conn.decl
     ok_eps = [e for e in conn.endpoints if e.status == "ok"]
     if not ok_eps:
@@ -515,7 +533,7 @@ def _finalize(conn: MCPConnector) -> MCPConnector:
     )
     host_pattern = _host_pattern_for(decl)
 
-    visibility_check: Callable[[], bool] = lambda c=conn: c.status == "ok"
+    visibility_check: Callable[[], bool] = lambda c=conn: c.status == "ok" and catalog.connector_current(c)
 
     registered: list[str] = []
     for t in merged.values():
@@ -527,21 +545,19 @@ def _finalize(conn: MCPConnector) -> MCPConnector:
             token_provider=token_provider,
             host_pattern=host_pattern,
             visibility_check=visibility_check,
+            call_check=lambda ctx, c=conn: (
+                catalog.connector_current(c) and c.status == "ok"
+                and (ctx.email is None or ctx.email == catalog.identity())
+                and (not c.decl.catalog_id or catalog.allowed_host(c, ctx.host))
+            ),
         )
         # Tag ownership so user-added activation hosts
         # (plugins.<name>.extra_hosts) can widen the host gate.
         spec.plugin_name = decl.plugin_name
-        try:
-            _tool_registry.register(spec)
-        except ValueError:
-            # Name collision with a local tool of the same name, or with
-            # another plugin using an overlapping prefix. We log and skip
-            # so the rest of the connector's tools still surface.
-            _logger.warning(
-                "mcp tool name collision: connector=%s name=%s — skipped",
-                decl.id, spec.name,
-            )
+        if _tool_registry.get(spec.name) is not None:
+            _logger.warning("mcp tool name collision: connector=%s name=%s — skipped", decl.id, spec.name)
             continue
+        catalog.tools()[spec.name] = spec
         registered.append(spec.name)
 
     conn.owned_tool_names = set(registered)
@@ -563,6 +579,13 @@ async def refresh_one(conn: MCPConnector) -> MCPConnector:
     must not interleave appends into the shared list (that's how
     duplicate rows happen).
     """
+    from . import catalog
+    if not catalog.connector_current(conn):
+        _drop_owned_tools(conn)
+        conn.status = "disabled"
+        conn.endpoints = []
+        conn.active_url = None
+        return conn
     decl = conn.decl
     candidates = _candidate_urls(decl)
     _logger.info(
@@ -590,6 +613,9 @@ async def refresh_endpoint(conn: MCPConnector, host: str) -> MCPConnector:
     lists) stay untouched and the merged registration is rebuilt from
     the union.
     """
+    from . import catalog
+    if not catalog.connector_current(conn):
+        return await refresh_one(conn)
     decl = conn.decl
     want = _host_of(host)
     targets = [u for u in _candidate_urls(decl) if _host_of(u) == want]
@@ -614,7 +640,7 @@ async def refresh_all() -> list[MCPConnector]:
     surface per-connector status in the UI.
     """
     out: list[MCPConnector] = []
-    for conn in MCP_CONNECTORS.values():
+    for conn in list_connectors():
         out.append(await refresh_one(conn))
     return out
 
