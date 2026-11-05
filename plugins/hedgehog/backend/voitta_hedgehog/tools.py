@@ -221,7 +221,11 @@ async def _orders(args: dict[str, Any], ctx: ToolCtx) -> dict[str, Any]:
         out.append({"order_id": el_attr(r, "edit-order", "data-order-id"),
                     "order_conf": el_attr(r, "edit-order", "data-order-conf") or el_attr(r, "view-trade-notes", "data-order-id"),
                     "date": c[1], "order": c[2], "symbol": c[3],
-                    "quantity": norm_value("quantity", c[4]), "price": norm_value("price", c[5]),
+                    "quantity": norm_value("quantity", c[4]),
+                    # c[5] is the limit/stop price ("MKT" for market orders); c[6] the execution
+                    # price once filled ("UserCancelled" otherwise; "$XXX.xx" masked same day).
+                    "price": norm_value("price", c[5]),
+                    "executed_price": num(c[6]) if len(c) > 6 else None,
                     "status": c[9] if len(c) > 9 else None})
     fills_note = await _join_fills(ctx, out)
     partial = [o for o in out if o.get("partial")]

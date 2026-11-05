@@ -210,15 +210,22 @@ async def open_positions(ctx: ToolCtx, stype: str) -> list[dict[str, Any]]:
 # capped the order. The transactions export has the real fills but no order
 # id, so fills are matched to orders by symbol, side and time.
 
-_TIME_FORMATS = ("%m/%d/%Y %I:%M:%S %p", "%m/%d/%Y %I:%M %p", "%m/%d/%Y %H:%M:%S", "%m/%d/%Y %H:%M",
+# Seen live (11/2026): order history "11/04/2026 13:00", transactions export
+# "11/04/2026 - 13:00" (note the " - ").
+_TIME_FORMATS = ("%m/%d/%Y %H:%M", "%m/%d/%Y %H:%M:%S", "%m/%d/%Y %I:%M %p", "%m/%d/%Y %I:%M:%S %p",
                  "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S", "%m/%d/%Y", "%Y-%m-%d")
 # Fill timestamps can be a little earlier than the order's (separate clocks).
 _FILL_SLOP_S = 120
+# During the session a market order's fill lands within minutes (13:00 → 13:02
+# seen); one entered after hours fills at the next open, up to a weekend later.
+_NEAR_S = 10 * 60
+_LATE_S = 4 * 86_400
 
 def parse_st_time(value: Any) -> tuple[datetime, bool] | None:
     """StockTrak date/time text → (naive ET datetime, has_time). None if unparseable."""
     s = " ".join(str(value or "").replace("\n", " ").split())
     s = re.sub(r"\s*\b(ET|EST|EDT)\b\s*$", "", s, flags=re.I).split(".")[0]
+    s = re.sub(r"^(\d{1,2}/\d{1,2}/\d{4})\s+-\s+", r"\1 ", s)  # "11/04/2026 - 13:00"
     for f in _TIME_FORMATS:
         try:
             return datetime.strptime(s, f), "%H" in f or "%I" in f
@@ -234,51 +241,83 @@ def side_of(text: Any) -> str | None:
             return side
     return None
 
+def _delay_s(o_when: tuple[datetime, bool], f_when: tuple[datetime, bool]) -> float | None:
+    """Seconds from order to fill, or None if this fill can't belong to the order."""
+    (o_at, o_t), (f_at, f_t) = o_when, f_when
+    if o_t and f_t:
+        d = (f_at - o_at).total_seconds()
+        return max(d, 0.0) if -_FILL_SLOP_S <= d <= _LATE_S else None
+    days = (f_at.date() - o_at.date()).days
+    return days * 86_400.0 if 0 <= days <= _LATE_S // 86_400 else None
+
+def _price_ok(a: Any, b: Any) -> bool:
+    """Same execution price, or one side unknown (masked $XXX.xx, missing)."""
+    return not (isinstance(a, (int, float)) and isinstance(b, (int, float))) or abs(a - b) < 0.006
+
 def attach_fills(orders: list[dict[str, Any]], txs: list[dict[str, Any]]) -> int:
     """Add filled_qty / fill_price / fill_time / partial to 'Filled' orders, in place.
 
-    Each fill is used once; orders are matched oldest first to the first unused
-    fill of the same symbol and side at or after the order time. Returns the
-    number of orders matched."""
+    The transactions export has no order id. A fill belongs to an order of the
+    same symbol and side, at or shortly after the order time, at the order's
+    execution price when both are known (order history shows it, e.g. $768.95
+    for the capped 770 SPY order). Each fill is used once. Two passes, orders
+    oldest first: fills within 10 minutes, then (for orders entered after
+    hours) the first fill up to 4 days later. Returns the number matched."""
     fills = []
     for t in txs:
-        side = side_of(t.get("TransactionType"))
+        ttype = str(t.get("TransactionType") or "")
+        side = side_of(ttype)
         when = parse_st_time(t.get("CreateDate"))
         q = num(t.get("Quantity"))
+        if "proceeds" in ttype.lower():
+            # An equity short fills as "Short Proceeds" with a NEGATIVE quantity;
+            # covering it adds a second "Short Proceeds" row with a positive one
+            # (alongside the real "Market - Cover" row). Only the first is a fill.
+            if q is None or q >= 0:
+                continue
+            side = "short"
         if side and when and q:
             fills.append({"symbol": str(t.get("Symbol") or "").upper(), "side": side, "at": when,
                           "qty": abs(q), "price": num(t.get("Price")), "time": t.get("CreateDate"), "used": False})
-    fills.sort(key=lambda f: f["at"][0])
 
     filled = [o for o in orders if "fill" in str(o.get("status") or "").lower()]
     timed = [(parse_st_time(o.get("date")), i, o) for i, o in enumerate(filled)]
     # Unparseable order times go last; page order is newest first, so reverse.
     timed.sort(key=lambda x: (x[0] is None, x[0][0] if x[0] else datetime.max, -x[1]))
-    matched = 0
-    for when, _, o in timed:
+
+    def best(when, o, max_delay: float):
         sym, side = str(o.get("symbol") or "").upper(), side_of(o.get("order"))
-        ordered = num(o.get("quantity"))
-        hit = None
+        cands = []
         for f in fills:
             if f["used"] or f["symbol"] != sym or f["side"] != side:
                 continue
-            if when:
-                (o_at, o_has_t), (f_at, f_has_t) = when, f["at"]
-                if o_has_t and f_has_t:
-                    if (f_at - o_at).total_seconds() < -_FILL_SLOP_S:
-                        continue
-                elif f_at.date() < o_at.date():
-                    continue
-            hit = f
-            break
-        if hit is None:
-            o.update(filled_qty=None, partial=None, fill_match="not_found")
-            continue
-        hit["used"] = True
-        matched += 1
-        fq = int(hit["qty"]) if float(hit["qty"]).is_integer() else hit["qty"]
-        o.update(filled_qty=fq, fill_price=hit["price"], fill_time=hit["time"],
-                 partial=bool(ordered is not None and fq < abs(ordered)), fill_match="symbol+side+time")
+            if not _price_ok(o.get("executed_price"), f["price"]):
+                continue
+            d = _delay_s(when, f["at"]) if when else 0.0
+            if d is not None and d <= max_delay:
+                cands.append((d, f["at"][0], f))
+        return min(cands, key=lambda c: (c[0], c[1]))[2] if cands else None
+
+    matched = 0
+    pending = []
+    for max_delay in (_NEAR_S, _LATE_S):
+        pending = []
+        for when, i, o in timed:
+            if "fill_match" in o:
+                continue
+            hit = best(when, o, max_delay)
+            if hit is None:
+                pending.append((when, i, o))
+                continue
+            hit["used"] = True
+            matched += 1
+            ordered = num(o.get("quantity"))
+            fq = int(hit["qty"]) if float(hit["qty"]).is_integer() else hit["qty"]
+            o.update(filled_qty=fq, fill_price=hit["price"], fill_time=hit["time"],
+                     partial=bool(ordered is not None and fq < abs(ordered)), fill_match="matched")
+        timed = pending
+    for _, _, o in pending:
+        o.update(filled_qty=None, partial=None, fill_match="not_found")
     return matched
 
 def earliest_date(orders: list[dict[str, Any]]) -> str | None:

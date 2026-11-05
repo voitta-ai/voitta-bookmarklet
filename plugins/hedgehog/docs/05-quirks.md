@@ -18,7 +18,10 @@ Behaviour observed on the live game (2026-11-02/03) that differs from the rules 
   "Filled 560"). History status is not proof of a full fill. The plugin checks `getmaxshares` at preview,
   parses the confirmed quantity at placement and compares the position change with the order;
   `hedgehog_orders(view=history)` joins the transactions export in (it has no order id, so fills are
-  matched by symbol, side and time) and adds `filled_qty` / `partial`.
+  matched by symbol, side, time and execution price) and adds `filled_qty` / `partial`. Matching details:
+  order history dates read `11/04/2026 13:00`, the transactions export `11/04/2026 - 13:00`; a session
+  fill lands 0–2 min after the order, an after-hours order fills at the next open (09:30–09:33); order
+  history cell 5 is the limit/stop price (`MKT`) and cell 6 the execution price, which equals the fill's.
 - **Trailing stop is always a percent.** The UI offers "$" and "%", but both post `OrderType=4`; a value
   of 50 became a stop at last × 1.5.
 - `OrderType=5` → server error.
@@ -30,6 +33,8 @@ Behaviour observed on the live game (2026-11-02/03) that differs from the rules 
 - A spread is placed as separate market GTC leg orders; cancelling any pending leg cancels all legs.
 - A new short may not appear in open positions for several seconds, but `cover` is accepted immediately.
 - Transactions show two "Short Proceeds" cash rows per short; short-side rows report the exchange as `Equities` (data bug).
+  An equity short has no "Market - Short" row at all: its fill is the "Short Proceeds" row with a NEGATIVE
+  quantity; the positive one comes with the cover (which also has its own "Market - Cover" row).
 
 ## Display
 - **Same-day fill prices are masked as `$XXX.xx`** in order history, positions and transactions until later

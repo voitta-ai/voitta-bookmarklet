@@ -410,9 +410,11 @@ def test_unscored_player_has_no_S():
 # ---- fills joined into order history (11/5 re-check) --------------------------
 
 def _orders_html(*rows):
-    """getorderhistory rows: cells[1]=date, [2]=order, [3]=symbol, [4]=qty, [5]=price, [9]=status."""
+    """getorderhistory rows, real layout (live 11/5/2026): [1]=date, [2]=order, [3]=symbol, [4]=qty,
+    [5]=limit/stop price ("MKT"), [6]=executed price, [7]=type, [8]=currency, [9]=status, [10]=expiry."""
     return {"kind": "json", "body": {"Html": {"rows": [
-        {"cells": ["", d, o, s, q, p, "", "", "", st], "els": [], "data": {}} for d, o, s, q, p, st in rows]}}}
+        {"cells": ["", d, o, s, q, lim, ex, "Equities", "USD", st, ""], "els": [], "data": {}}
+        for d, o, s, q, lim, ex, st in rows]}}}
 
 def _tx(*rows):
     head = ["Symbol", "TransactionType", "Quantity", "Price", "CreateDate"]
@@ -451,21 +453,72 @@ def test_side_of_prefers_cover_and_short():
 async def test_order_history_has_filled_qty_and_numbers(monkeypatch):
     async def fake(ctx, method, path, params=None, **k):
         if path == "/account/getorderhistory":
-            return _orders_html(("11/4/2026 1:00:12 PM", "Market - Buy", "SPY", "770", "$XXX.xx", "Filled"),
-                                ("11/4/2026 3:10:00 PM", "Market - Sell", "SPY", "-63", "$750.10", "Filled"))
+            return _orders_html(("11/04/2026 13:00", "Market - Buy", "SPY", "770", "MKT", "$XXX.xx", "Filled"),
+                                ("11/04/2026 15:10", "Limit - Sell", "SPY", "-63", "$750.00", "$750.10000", "Filled"))
         if path == "/admin/ExportTransactionHistory":
             assert params["from"] == "11/4/2026"
-            return _tx(("SPY", "Market - Buy", "573", "749.00", "11/4/2026 1:00:13 PM"),
-                       ("SPY", "Market - Sell", "-63", "750.10", "11/4/2026 3:10:02 PM"))
+            return _tx(("SPY", "Market - Buy", "573", "$749.0000", "11/04/2026 - 13:00"),
+                       ("SPY", "Market - Sell", "-63", "$750.1000", "11/04/2026 - 15:12"))
         raise AssertionError(path)
 
     monkeypatch.setattr(tools, "st_call", fake)
     r = await tools._orders({"view": "history"}, CTX)
     buy, sell = r["orders"]
     assert (buy["quantity"], buy["filled_qty"], buy["partial"], buy["fill_price"]) == (770, 573, True, 749.0)
-    assert buy["price"] == "$XXX.xx"  # masked by StockTrak; the real price is fill_price
-    assert (sell["quantity"], sell["filled_qty"], sell["partial"], sell["price"]) == (-63, 63, False, 750.1)
-    assert r["partial_fills"] == [{"symbol": "SPY", "date": "11/4/2026 1:00:12 PM", "ordered": 770, "filled": 573}]
+    assert buy["price"] == "MKT" and buy["executed_price"] is None  # masked same day; fill_price has it
+    assert (sell["quantity"], sell["filled_qty"], sell["partial"], sell["price"], sell["executed_price"]) == \
+        (-63, 63, False, 750.0, 750.1)
+    assert r["partial_fills"] == [{"symbol": "SPY", "date": "11/04/2026 13:00", "ordered": 770, "filled": 573}]
+
+
+def _live_fixture():
+    import csv
+    import json
+    from pathlib import Path
+
+    data = json.loads((Path(__file__).parent / "fixtures" / "live_2026-11-05.json").read_text())
+    orders = _orders_html(*[tuple(line.split("|")) for line in data["order_history"]])
+    tx_rows = list(csv.reader(data["transactions_csv"]))
+    return orders, {"kind": "csv", "rows": tx_rows}
+
+async def test_live_order_history_matches_every_fill(monkeypatch):
+    """Real StockTrak data (11/2–11/5/2026): the 11/5 re-check got 'Matched 0 of 12'."""
+    orders, txs = _live_fixture()
+
+    async def fake(ctx, method, path, params=None, **k):
+        if path == "/account/getorderhistory":
+            return orders
+        if path == "/admin/ExportTransactionHistory":
+            assert params["from"] == "11/2/2026"  # oldest order on the page, not one day
+            return txs
+        raise AssertionError(path)
+
+    monkeypatch.setattr(tools, "st_call", fake)
+    r = await tools._orders({"view": "history"}, CTX)
+    filled = [o for o in r["orders"] if o["status"] == "Filled"]
+    assert len(filled) == 26
+    assert [o for o in filled if o["fill_match"] != "matched"] == []
+    assert "Matched" not in r["note"]  # no "Matched x of y" shortfall note
+    assert sorted((p["symbol"], p["ordered"], p["filled"]) for p in r["partial_fills"]) == \
+        [("QQQ", 560, 288), ("SPY", 770, 573)]
+    by = {(o["date"], o["symbol"], o["order"]): o for o in filled}
+    qqq = by[("11/04/2026 13:00", "QQQ", "Market - Buy")]
+    assert (qqq["fill_price"], qqq["fill_time"]) == (696.41, "11/04/2026 - 13:02")  # 2 min later
+    late = by[("11/04/2026 13:10", "QQQ", "Market - Buy")]
+    assert (late["filled_qty"], late["partial"], late["fill_time"]) == (277, False, "11/04/2026 - 13:11")
+    # Entered after hours, filled at the next open.
+    opt = by[("11/02/2026 22:29", "F2620K13", "Market - Short")]
+    assert (opt["filled_qty"], opt["fill_time"]) == (1, "11/03/2026 - 09:33")
+    # Equity short shows up only as a negative "Short Proceeds" row.
+    short = by[("11/03/2026 10:22", "F", "Market - Short")]
+    assert (short["filled_qty"], short["fill_price"]) == (1, 12.35)
+    cancelled = [o for o in r["orders"] if o["status"] == "UserCancelled"]
+    assert cancelled and all("fill_match" not in o for o in cancelled)
+
+def test_parse_st_time_accepts_transaction_dash_format():
+    assert _core.parse_st_time("11/04/2026 - 13:02") == (_core.datetime(2026, 11, 4, 13, 2), True)
+    assert _core.parse_st_time("11/04/2026 13:00") == (_core.datetime(2026, 11, 4, 13, 0), True)
+    assert _core.parse_st_time("11/04/2026") == (_core.datetime(2026, 11, 4), False)
 
 async def test_quote_last_price_is_a_number(monkeypatch):
     async def fake(ctx, *a, **k):
