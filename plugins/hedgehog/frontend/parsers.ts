@@ -47,7 +47,11 @@ function parseFragment(html: string): Document {
   // Bare <tr> fragments (getclosepositions, getorderhistory) are dropped by
   // the HTML parser outside a table, so wrap them first.
   const wrapped = /^\s*<tr[\s>]/i.test(html) ? `<table><tbody>${html}</tbody></table>` : html;
-  return new DOMParser().parseFromString(`<!doctype html><body>${wrapped}</body>`, "text/html");
+  const doc = new DOMParser().parseFromString(`<!doctype html><body>${wrapped}</body>`, "text/html");
+  // Fragments embed page JS (getpricev2's quote panel: `$(function () { getpriceforslider(); … })`,
+  // the order preview's setupCharacterCounter). textContent would include it; drop it.
+  doc.querySelectorAll("script, style, noscript, template").forEach((el) => el.remove());
+  return doc;
 }
 
 function rowData(tr: Element): Pick<HtmlRow, "data" | "els"> {

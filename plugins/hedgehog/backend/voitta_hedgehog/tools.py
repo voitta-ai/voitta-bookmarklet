@@ -15,9 +15,10 @@ from app.tools.registry import ToolCtx, ToolSpec, registry
 
 from voitta_hedgehog import rewards
 from voitta_hedgehog._core import (
-    StockTrakError, body_of, csv_records, el_attr, fail, rows_of, st_call, text_of, today_et,
+    StockTrakError, attach_fills, body_of, csv_records, earliest_date, el_attr, fail, fix_key, keep_type,
+    norm_record, norm_value, now_et_iso, num, open_positions, rows_of, st_call, text_of, today_et,
 )
-from voitta_hedgehog.rules import SPREAD_TYPES
+from voitta_hedgehog.rules import SPREAD_TYPES, option_type_from_symbol
 
 _NO_ARGS = {"type": "object", "properties": {}, "additionalProperties": False}
 
@@ -73,24 +74,82 @@ def _summary_pairs(rows: list[list[str]]) -> dict[str, str]:
         for i in range(0, len(r) - 1, 2):
             k, v = r[i].strip(), r[i + 1].strip()
             if k.endswith(":") and k[:-1] not in ("First Name", "Last Name"):
-                out[k[:-1]] = v
+                out[fix_key(k[:-1])] = v
     return out
+
+
+def _pick(summary: dict[str, Any], *needles: str, exact: tuple[str, ...] = ()) -> tuple[str | None, float | None]:
+    """(key, number) of the first summary field matching exactly, else containing all needles."""
+    for k in exact:
+        if k in summary and isinstance(summary[k], (int, float)):
+            return k, float(summary[k])
+    for k, v in summary.items():
+        if all(n in k.lower() for n in needles) and isinstance(v, (int, float)):
+            return k, float(v)
+    return None, None
+
+
+# Below this the identity long − short + cash − loan = portfolio value is
+# treated as holding (StockTrak rounds some fields).
+_IDENTITY_TOLERANCE = 5.0
+
+
+def account_checks(summary: dict[str, Any]) -> tuple[list[str], dict[str, Any]]:
+    """Sanity checks on one summary snapshot (may null a field). Returns (warnings, details)."""
+    warnings: list[str] = []
+    details: dict[str, Any] = {}
+    _, long_v = _pick(summary, "long position")
+    _, short_v = _pick(summary, "short position")
+    _, pv = _pick(summary, "portfolio value", exact=("Portfolio Value",))
+    _, cash = _pick(summary, "cash", exact=("Cash Balance", "Cash"))
+    _, loan = _pick(summary, "loan")
+    if long_v is not None and pv is not None and cash is not None:
+        computed = long_v - abs(short_v or 0) + cash - (loan or 0)
+        diff = round(pv - computed, 2)
+        details["identity"] = {"formula": "long − short + cash − loan", "computed_portfolio_value": round(computed, 2),
+                               "reported_portfolio_value": pv, "difference": diff}
+        if abs(diff) > _IDENTITY_TOLERANCE:
+            warnings.append(
+                f"Fields are from different moments: long − short + cash − loan = {computed:,.2f}, but Portfolio Value "
+                f"= {pv:,.2f} (off by {diff:,.2f}). Typically holdings are priced live while Portfolio Value is still "
+                "the previous close (early in the session). Don't mix these fields in one calculation; re-check later.")
+    mk, mreq = _pick(summary, "margin requirement")
+    if mk and (loan or 0) > 0 and (mreq or 0) == 0:
+        summary[mk] = None
+        details["margin_requirement"] = "not reported"
+        warnings.append(
+            f"StockTrak reports '{mk}' as $0.00 while the loan balance is {loan:,.2f}. That is a missing value, "
+            "not 'no margin risk'. The game allows 2× leverage (buying power $2M on the $1M start).")
+    if long_v and pv and pv > 0:
+        details["gross_leverage"] = round((long_v + abs(short_v or 0)) / pv, 3)
+    return warnings, details
 
 
 @_guard
 async def _account(args: dict[str, Any], ctx: ToolCtx) -> dict[str, Any]:
     csv = await st_call(ctx, "GET", "/account/ExportToExcelPortfolioSummary", {"date": today_et()})
-    summary = _summary_pairs(csv.get("rows") or [])
-    tm = summary.get("Trades Made/Allowed", "")
-    made, _, allowed = tm.partition("/")
-    return {"ok": True, "summary": summary,
+    raw = _summary_pairs(csv.get("rows") or [])
+    # "Trades Made/Allowed: 26/9974" is made / REMAINING (it counts down from
+    # 10,000: 18/9982 the day before), despite the label.
+    tm = raw.get("Trades Made/Allowed", "")
+    made, _, remaining = (p.strip() for p in tm.partition("/"))
+    empty = sorted(k for k, v in raw.items() if v == "")
+    summary = norm_record({k: v for k, v in raw.items() if v != ""})
+    warnings, checks = account_checks(summary)
+    return {"ok": True, "as_of_et": now_et_iso(), "summary": summary,
             "trades_made": int(made) if made.isdigit() else None,
-            "trades_remaining": int(allowed) if allowed.isdigit() else None,
-            "note": "Same-day fill prices can show as $XXX.xx in the web views; this CSV has real values."}
+            "trades_remaining": int(remaining) if remaining.isdigit() else None,
+            "trades_allowed": int(made) + int(remaining) if made.isdigit() and remaining.isdigit() else None,
+            "checks": checks, "warnings": warnings, "not_reported_by_stocktrak": empty,
+            "note": "Money in dollars, percentages in percent units. One snapshot of StockTrak's summary CSV; "
+                    "early in the session some fields still carry the previous close (see warnings). "
+                    "Same-day fill prices can show as $XXX.xx in the web views; this CSV has real values."}
 
 _reg("hedgehog_account",
      "Portfolio summary from StockTrak's own CSV export: cash, market value of long/short positions, portfolio "
-     "value, % return, buying power, trades made / remaining. Use this for 'how am I doing'.",
+     "value, % return, buying power, loan, trades made / remaining, as plain numbers. Includes consistency "
+     "checks (warnings when fields come from different moments, or margin requirement is missing). "
+     "Use this for 'how am I doing'.",
      _NO_ARGS, _account)
 
 
@@ -107,23 +166,27 @@ async def _positions(args: dict[str, Any], ctx: ToolCtx) -> dict[str, Any]:
         sym = d.get("data-option-symbol")
         if sym:
             ids[sym] = {"security_id": d.get("data-securityid"), "underlying_security_id": d.get("data-underlying-securityid"),
-                        "quantity": d.get("data-quantity"), "company": d.get("data-company")}
+                        "quantity": num(d.get("data-quantity")), "company": d.get("data-company")}
+    if stype == "Options":  # the same id rows can be equity rows too; drop those
+        ids = {s: i for s, i in ids.items() if option_type_from_symbol(s)}
     try:
-        csv = await st_call(ctx, "GET", "/admin/ExportOpenPositions/", {"securityType": stype})
-        recs = csv_records(csv.get("rows") or [])
+        recs = await open_positions(ctx, stype)
     except StockTrakError:
         recs = []
     for r in recs:
-        r.update({k: v for k, v in (ids.get(r.get("Symbol", "")) or {}).items() if v})
+        r.update({k: v for k, v in (ids.get(r.get("Symbol", "")) or {}).items() if v is not None and v != ""})
     if not recs:  # CSV empty: fall back to ids only
-        recs = [{"Symbol": s, **{k: v for k, v in i.items() if v}} for s, i in ids.items()]
-    return {"ok": True, "security_type": stype, "count": len(recs), "positions": recs,
-            "note": "security_id / underlying_security_id are what hedgehog_exercise_option needs."}
+        recs = [{"Symbol": s, **{k: v for k, v in i.items() if v is not None and v != ""}} for s, i in ids.items()]
+    return {"ok": True, "as_of_et": now_et_iso(), "security_type": stype, "count": len(recs), "positions": recs,
+            "note": "Numbers are plain (money to cents, prices to 4 dp, ProfitLossPercentage in percent). LastPrice "
+                    "can still be the previous close early in the session, so MarketValue may not match "
+                    "hedgehog_account at that moment. security_id / underlying_security_id are what "
+                    "hedgehog_exercise_option needs."}
 
 _reg("hedgehog_positions",
      "Open positions for one security type (equity | option): symbol, quantity, last price, price paid, P&L, "
-     "market value (from the CSV export), plus the ids the trading tools need. Short positions can take a few "
-     "seconds to appear after a fill.",
+     "market value (from the CSV export, as numbers), plus the ids the trading tools need. An empty list means "
+     "no positions of that type. Short positions can take a few seconds to appear after a fill.",
      {"type": "object", "properties": {"security_type": {"type": "string", "enum": ["equity", "option"], "default": "equity"}},
       "additionalProperties": False}, _positions)
 
@@ -141,8 +204,9 @@ async def _orders(args: dict[str, Any], ctx: ToolCtx) -> dict[str, Any]:
             if len(c) < 10:
                 continue
             out.append({"order_id": el_attr(r, "cancelorder", "data-status") or (r.get("data") or {}).get("data-status"),
-                        "date": c[0].replace("Cancel", "").strip(), "order": c[1], "symbol": c[2], "quantity": c[3],
-                        "price": c[4], "type": c[6], "status": c[8], "expires": c[9]})
+                        "date": c[0].replace("Cancel", "").strip(), "order": c[1], "symbol": c[2],
+                        "quantity": norm_value("quantity", c[3]), "price": norm_value("price", c[4]),
+                        "type": c[6], "status": c[8], "expires": c[9]})
         return {"ok": True, "view": "open", "orders": out,
                 "note": "order_id is what hedgehog_cancel_order takes. A spread's legs cancel together."}
     params = {"pageIndex": int(args.get("page") or 1), "pageSize": int(args.get("page_size") or 50),
@@ -156,16 +220,42 @@ async def _orders(args: dict[str, Any], ctx: ToolCtx) -> dict[str, Any]:
             continue
         out.append({"order_id": el_attr(r, "edit-order", "data-order-id"),
                     "order_conf": el_attr(r, "edit-order", "data-order-conf") or el_attr(r, "view-trade-notes", "data-order-id"),
-                    "date": c[1], "order": c[2], "symbol": c[3], "quantity": c[4], "price": c[5],
+                    "date": c[1], "order": c[2], "symbol": c[3],
+                    "quantity": norm_value("quantity", c[4]), "price": norm_value("price", c[5]),
                     "status": c[9] if len(c) > 9 else None})
+    fills_note = await _join_fills(ctx, out)
+    partial = [o for o in out if o.get("partial")]
     return {"ok": True, "view": "history", "orders": out,
-            "note": "order_conf is what hedgehog_edit_order / hedgehog_add_trade_note take. "
-                    "The 8-char confirmation shown to users is its last 8 hex chars, uppercased."}
+            "partial_fills": [{"symbol": o["symbol"], "date": o["date"], "ordered": o["quantity"],
+                               "filled": o["filled_qty"]} for o in partial],
+            "note": "quantity is what was ORDERED; StockTrak can fill fewer shares (it caps an order at the remaining "
+                    "buying power) and still show 'Filled'. filled_qty / fill_price / partial come from the "
+                    f"transactions export, matched by symbol, side and time. {fills_note} "
+                    "order_conf is what hedgehog_edit_order / hedgehog_add_trade_note take. The 8-char confirmation "
+                    "shown to users is its last 8 hex chars, uppercased."}
+
+
+async def _join_fills(ctx: ToolCtx, orders: list[dict[str, Any]]) -> str:
+    """Attach real fills from the transactions export to 'Filled' orders. Returns a status note."""
+    if not any("fill" in str(o.get("status") or "").lower() for o in orders):
+        return ""
+    try:
+        res = await st_call(ctx, "GET", "/admin/ExportTransactionHistory",
+                            {"from": earliest_date(orders) or "1/1/2026", "to": today_et()})
+    except StockTrakError as exc:
+        for o in orders:
+            if "fill" in str(o.get("status") or "").lower():
+                o.update(filled_qty=None, partial=None, fill_match="unavailable")
+        return f"Fills could not be read ({exc}); use hedgehog_history(report='transactions')."
+    n = attach_fills(orders, csv_records(res.get("rows") or []))
+    total = sum(1 for o in orders if "fill_match" in o)
+    return f"Matched {n} of {total} filled orders to fills." if n < total else ""
 
 _reg("hedgehog_orders",
      "Orders. view='open' → pending orders with order_id (for cancel). view='history' → all orders with status "
-     "(Open, Filled, UserCancelled, …) and order_conf (for edit / trade notes); optional start_date/end_date "
-     "(MM/DD/YYYY), status, page, page_size.",
+     "(Open, Filled, UserCancelled, …), order_conf (for edit / trade notes) and, for filled orders, filled_qty / "
+     "fill_price / partial (StockTrak shows capped orders as 'Filled' with the ordered quantity); "
+     "optional start_date/end_date (MM/DD/YYYY), status, page, page_size.",
      {"type": "object", "properties": {
          "view": {"type": "string", "enum": ["open", "history"], "default": "open"},
          "start_date": {"type": "string"}, "end_date": {"type": "string"}, "status": {"type": "string"},
@@ -204,6 +294,11 @@ async def _history(args: dict[str, Any], ctx: ToolCtx) -> dict[str, Any]:
     report = str(args.get("report") or "transactions")
     res = await _report(ctx, report, args)
     recs = csv_records(res.get("rows") or [])
+    if report == "open_positions":
+        recs = keep_type(recs, {"option": "Options"}.get(str(args.get("security_type")), "Equities"))
+    if report == "portfolio_summary":
+        recs = [{fix_key(k): v for k, v in r.items()} for r in recs]
+    recs = [norm_record(r) for r in recs]
     limit = int(args.get("limit") or 200)
     return {"ok": True, "report": report, "count": len(recs), "rows": recs[:limit], "truncated": len(recs) > limit}
 
@@ -258,6 +353,7 @@ async def _quote(args: dict[str, Any], ctx: ToolCtx) -> dict[str, Any]:
         return fail("not_found", b.get("ErrorMessage") or f"no price for {sym}")
     keep = ("Symbol", "CompanyName", "LastPrice", "Currency", "Exchange", "TradingHalted")
     out = {"ok": True, **{k: b.get(k) for k in keep}}
+    out["LastPrice"] = norm_value("LastPrice", out["LastPrice"])  # "$749.00" → 749.0
     out["quote_text"] = text_of(b, "symbolPrice")[:600]
     out["note"] = "StockTrak prices are delayed (Hedgehog Camp rules: 15 min)."
     return out
@@ -373,8 +469,27 @@ _reg("hedgehog_my_rank",
 @_guard
 async def _api_get(args: dict[str, Any], ctx: ToolCtx) -> dict[str, Any]:
     method = str(args.get("method") or "GET").upper()
-    res = await st_call(ctx, method, str(args.get("path") or ""), args.get("params") or {})
-    return {"ok": True, **res}
+    path = str(args.get("path") or "")
+    res = await st_call(ctx, method, path, args.get("params") or {})
+    out: dict[str, Any] = {"ok": True, **res}
+    caveat = RAW_CAVEATS.get(path.rstrip("/").lower())
+    if caveat:
+        out["caveat"] = caveat  # the raw payload itself is left untouched
+    return out
+
+# Known traps in raw payloads (keyed by lower-case path, no trailing slash).
+RAW_CAVEATS = {
+    "/account/dashboardhistoricalportfoliovalues":
+        "The Trades column is the CUMULATIVE trade count (0, 14, 22, …), not trades per day.",
+    "/account/exporttoexcelportfoliosummary":
+        "'Trades Made/Allowed' is made / remaining (counts down from 10,000). Labels carry typos "
+        "(Accured, Matket). hedgehog_account returns this summary cleaned up and cross-checked.",
+    "/admin/exportopenpositions":
+        "securityType=Options also returns the equity rows; hedgehog_positions filters them.",
+    "/account/getorderhistory":
+        "Quantity is what was ordered; a capped order still shows 'Filled'. hedgehog_orders(view='history') "
+        "adds filled_qty from the transactions export.",
+}
 
 _reg("hedgehog_api_read",
      "Escape hatch: call any READ endpoint on the plugin allowlist (docs/03-stocktrak-api.md) with raw params; "

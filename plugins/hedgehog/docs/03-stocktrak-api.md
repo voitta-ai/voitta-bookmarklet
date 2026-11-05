@@ -59,9 +59,9 @@ Preview adds `"isOrderPreview": true` and omits TradeNotes.
 |---|---|---|---|
 | POST | /trading/getpricev2 | symbol, exchange, securityType, monthCode, year, equitiesType=All, isOptionSpreads=false | Success, Symbol, CompanyName, LastPrice, Currency, Exchange, TradingHalted, symbolPrice(html) |
 | POST | /trading/ismarketopen | tab=NorthAmerica, exchange=US | Success, IsOpen, Message |
-| GET | /trading/getmaxshares | OrderSide, SecurityType, Symbol, Price | success, maxshares |
+| GET | /trading/getmaxshares | OrderSide, SecurityType, Symbol, Price | success, maxshares (what buying power allows; used by preview) |
 | POST | /trading/getEstimatedCost(ForOptions) | order form | success, estimatedcost, costvalue |
-| POST | /trading/previeworderv2 | order form | Success, ErrorMessage, OrderInfoHtml (validation; places nothing) |
+| POST | /trading/previeworderv2 | order form | Success, ErrorMessage, OrderInfoHtml (validation; places nothing). Without `CompanyName`, `Currency` and `UnitPrice` it answers `{"Success": false, "ErrorMessage": ""}`: a rejection with no reason. OrderInfoHtml's trade-note counter always reads `0 / 300` (rendered before the note is attached) |
 | POST | /trading/getoptionexpiry | symbol | Html with `<option>M/D/YYYY</option>` |
 | POST | /trading/getstrikeprice | symbol, optionType, expiration, isFullList (or isOptionSpreads=true → options carry value attrs) | Html options |
 | POST | /trading/getoptionpricev2 | symbol, exchange, optionType, expiration, strikePrice | Html: line-text fields + OptionSymbol |
@@ -96,14 +96,14 @@ Preview adds `"isOrderPreview": true` and omits TradeNotes.
 | GET | /account/getsecurities | portfolioID | [{SecurityID, Symbol}] ever ordered |
 | GET | /account/getrankingsv2 | pageIndex, pageSize, rankingType=Overall, date, filterType | UserRankHtml "rank / N"; rows data-percentage |
 | GET | /account/getgraphportfolioV2 | symbol | empty when flat |
-| GET | /account/dashboardhistoricalportfoliovalues | – | {table}: one EOD row per day |
+| GET | /account/dashboardhistoricalportfoliovalues | – | {table}: one EOD row per day. The **Trades column is cumulative** (0, 14, 22, …), not trades that day |
 | GET | /account/gettradenotes, /account/gettradingnotesbyorder | paging / orderConf | |
 
 ### CSV exports (structured, real prices)
 | GET | Params | Content |
 |---|---|---|
-| /account/ExportToExcelPortfolioSummary | date | label/value pairs across columns: cash, market values, portfolio value, % return, buying power, Trades Made/Allowed |
-| /admin/ExportOpenPositions/ | securityType | Symbol, Description, Quantity, Currency, LastPrice, PricePaid, DayChange, ProfitLoss, MarketValue, ProfitLossPercentage |
+| /account/ExportToExcelPortfolioSummary | date | label/value pairs across columns: cash, market values, portfolio value, % return, buying power, Trades Made/Allowed (made / **remaining**, despite the label: 26/9974 = 26 made of 10,000). Labels carry StockTrak typos (`Accured Interest`, `Net Matket Value`); the plugin returns them corrected (`Accrued`, `Market`) |
+| /admin/ExportOpenPositions/ | securityType (**ignored for Options**: equity rows come back too; the plugin filters by symbol shape) | Symbol, Description, Quantity, Currency, LastPrice, PricePaid, DayChange, ProfitLoss, MarketValue, ProfitLossPercentage |
 | /admin/ExportTransactionHistory | from, to | Symbol, TransactionType, CompanyName, Exchange, Quantity, FXRate, Currency, SecurityType, Price, Amount, CreateDate |
 | /account/exportclosepositions | – | "Realized Gains": DATETIME, SYMBOL, …, ORDER SIDE, QUANTITY, MULTIPLIER, AVG PRICE, …, PROFIT LOSS PER POSITION |
 | /account/ExportTradeNotes | from, to | trade notes |

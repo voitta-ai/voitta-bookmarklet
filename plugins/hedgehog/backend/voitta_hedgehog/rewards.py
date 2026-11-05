@@ -51,15 +51,40 @@ def _match(row: dict[str, Any], username: str) -> bool:
     return gid == u or gid.endswith(":" + u)  # portal-created players show as "portal:<name>"
 
 
+UNITS = {
+    "weekly_return": "fraction (0.0144 = 1.44 %); this is R in dH = H0 × R × S",
+    "weekly_return_pct": "percent (1.44 = 1.44 %); same value as weekly_return × 100",
+    "total_return_pct": "percent",
+    "benchmark_return_pct": "percent",
+    "excess_return_pp": "percentage points vs the benchmark",
+    "sharpe_ratio": "consistency score S = (G − L)/(G + L) in [−1, 1]; not a Sharpe ratio",
+}
+
+def unscored(row: dict[str, Any]) -> dict[str, Any]:
+    """Before any credited week, S is not used for rewards; the API still fills it
+    from partial data (e.g. −1.0), which reads like 'every day was a loss'."""
+    if row.get("weeks_participated"):
+        return row
+    out = dict(row)
+    out["sharpe_ratio_uncredited"] = out.pop("sharpe_ratio", None)
+    out["sharpe_ratio"] = None
+    out["scored"] = False
+    return out
+
 async def my_standing(username: str) -> dict[str, Any]:
     """Own row of the current token leaderboard + field size. No other players."""
     data = await _get("/api/v1/rewards/leaderboard", sort_by="token_balance", limit=1000)
     rows = data.get("leaderboard", []) if isinstance(data, dict) else data
-    mine = [r for r in rows if _match(r, username)]
+    mine = [unscored(r) for r in rows if _match(r, username)]
     return {
         "username": username,
         "found": bool(mine),
         "entries": scrub(mine),
+        "units": UNITS,
+        "scoring_note": (
+            "weeks_participated = 0: no reward week credited yet, so S (sharpe_ratio) is not scored (null); "
+            "sharpe_ratio_uncredited is the API's provisional value from partial data."
+        ) if any(r.get("scored") is False for r in mine) else None,
         "players_on_leaderboard": len(rows),
         "benchmark": scrub(data.get("benchmark")) if isinstance(data, dict) else None,
         "note": None if mine else (
@@ -76,13 +101,14 @@ async def my_week(week_id: int, username: str) -> dict[str, Any]:
     mine = [r for r in rewards if _match(r, username)]
     agg = {k: data.get(k) for k in ("week_number", "start_date", "end_date", "total_participants",
                                     "total_distributed", "total_burned", "net_tokens_issued")}
-    out: dict[str, Any] = {"week": agg, "benchmark": scrub(data.get("benchmark")), "found": bool(mine)}
+    out: dict[str, Any] = {"week": agg, "benchmark": scrub(data.get("benchmark")), "found": bool(mine), "units": UNITS}
     if mine:
         r = mine[0]
         out["mine"] = scrub(r)
         # The API calls the consistency score S "sharpe_ratio"; it is not a Sharpe ratio.
         out["formula_check"] = {
             "H0_previous_tokens": r.get("previous_token_balance"),
+            "R_weekly_return": r.get("weekly_return"),
             "R_weekly_return_pct": r.get("weekly_return_pct"),
             "S_consistency": r.get("sharpe_ratio"),
             "dH_computed": round((r.get("previous_token_balance") or 0) * (r.get("weekly_return_pct") or 0) / 100

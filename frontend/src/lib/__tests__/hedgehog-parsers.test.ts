@@ -64,6 +64,16 @@ describe("parseHtml", () => {
     expect(p.fields).toEqual({ Last: "0.42", OptionSymbol: "F2620K12.5" });
   });
 
+  it("drops inline page JS and styles from text (quote panel, order preview)", () => {
+    const p = parseHtml(`<div class="quote"><b>SPY</b> 768.21
+      <script>$(function () { getpriceforslider(); $.ajax({ url: '/trading/getEstimatedCost' }); });</script>
+      <style>.x{color:red}</style>
+      <textarea id="notes"></textarea><span>0 / 300</span>
+      <script type="text/javascript">$(document).ready(function () { setupCharacterCounter('#notes'); });</script></div>`);
+    expect(p.text).toBe("SPY 768.21 0 / 300");
+    expect(p.text).not.toMatch(/getpriceforslider|setupCharacterCounter|\$\(|color:red/);
+  });
+
   it("extracts spread leg templates", () => {
     expect(parseHtml(LEGS).legs).toEqual([
       { side: "Buy", quantity: "1", option_type: "Call", needs_strike: true },

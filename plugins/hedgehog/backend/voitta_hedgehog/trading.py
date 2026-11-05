@@ -17,6 +17,8 @@ Guardrails enforced HERE, not just in the prompt:
 
 from __future__ import annotations
 
+import asyncio
+import re
 import time
 from typing import Any
 
@@ -24,7 +26,8 @@ from app.tools.registry import ToolCtx, ToolSpec, registry
 from app.tools.server import ask_user
 
 from voitta_hedgehog._core import (
-    StockTrakError, body_of, confirm_orders, fail, st_call, text_of, trading_enabled,
+    StockTrakError, all_text, body_of, confirm_orders, confirmed_quantity, fail, num, open_positions, st_call,
+    text_of, today_et, trading_enabled,
 )
 from voitta_hedgehog.rules import (
     RuleError, build_order_form, build_spread_body, fingerprint, option_moneyness, option_type_from_symbol, parse_money,
@@ -116,12 +119,44 @@ _ORDER_SCHEMA = {
 
 # ---- single orders ---------------------------------------------------------
 
+_EMPTY_REJECTION = ("StockTrak rejected the preview without a reason (empty ErrorMessage). This happens e.g. when "
+                    "required form fields are missing; check docs/03-stocktrak-api.md (order form).")
+
+# The preview template renders the trade-note box's character counter
+# ("0 / 300") before the note is attached; it says nothing about the note sent.
+_NOTE_COUNTER = re.compile(r"\b\d{1,3}\s*/\s*300\b")
+
+async def _max_shares(ctx: ToolCtx, form: dict[str, str]) -> int | None:
+    """How many shares StockTrak will accept for this equity buy/short (None if unknown).
+
+    StockTrak silently caps an order at the remaining buying power: the
+    confirmation names the reduced quantity, while order history keeps the
+    ordered quantity and says "Filled" (seen 11/4/2026: 770 SPY → 573)."""
+    if form["SecurityType"] != "Equities" or form["OrderSide"] not in ("1", "3"):
+        return None
+    # Limit/stop orders carry a share price; market orders 0; trailing stops a PERCENT.
+    price = form.get("Price") or "0" if form["OrderType"] in ("2", "3") else "0"
+    try:
+        if not num(price):
+            q = body_of(await st_call(ctx, "POST", "/trading/getpricev2", {
+                "symbol": form["Symbol"], "exchange": "US", "securityType": "Equities", "monthCode": "", "year": "",
+                "equitiesType": "All", "isOptionSpreads": "false"}))
+            price = str(q.get("LastPrice") or "")
+        if not num(price):
+            return None
+        m = body_of(await st_call(ctx, "GET", "/trading/getmaxshares", {
+            "OrderSide": form["OrderSide"], "SecurityType": "Equities", "Symbol": form["Symbol"], "Price": price}))
+    except StockTrakError:
+        return None
+    n = num(m.get("maxshares"))
+    return int(n) if n is not None else None
+
 @_guard
 async def _preview_order(args: dict[str, Any], ctx: ToolCtx) -> dict[str, Any]:
     form, summary = build_order_form(args)
     b = body_of(await st_call(ctx, "POST", "/trading/previeworderv2", form))
     if not b.get("Success"):
-        return fail("rejected_by_stocktrak", b.get("ErrorMessage") or "preview rejected", summary=summary)
+        return fail("rejected_by_stocktrak", b.get("ErrorMessage") or _EMPTY_REJECTION, summary=summary)
     est = None
     path = "/trading/getEstimatedCostForOptions" if form["SecurityType"] == "Options" else "/trading/getEstimatedCost"
     try:
@@ -129,10 +164,22 @@ async def _preview_order(args: dict[str, Any], ctx: ToolCtx) -> dict[str, Any]:
         est = e.get("estimatedcost")
     except StockTrakError:
         pass
+    qty = int(form["Quantity"])
+    warnings: list[str] = []
+    max_sh = await _max_shares(ctx, form)
+    if max_sh is not None and max_sh < qty:
+        warnings.append(f"Buying power covers only {max_sh} of the {qty} shares. StockTrak will silently fill "
+                        f"{max_sh} and still log the order as {qty} 'Filled'. Reduce the quantity or free up buying power.")
+    preview_text = _NOTE_COUNTER.sub("", text_of(b, "OrderInfoHtml"))
+    shown = confirmed_quantity(preview_text, form["Symbol"])
+    if shown is not None and shown != qty:
+        warnings.append(f"StockTrak's preview names {shown}, not {qty}.")
     pid = _remember(ctx, "order", form, summary)
     return {"ok": True, "preview_id": pid, "summary": summary, "estimated_cost": est,
-            "stocktrak_preview": text_of(b, "OrderInfoHtml")[:1200],
-            "next": f"Show the user the summary; then hedgehog_place_order(preview_id='{pid}'). Valid {PREVIEW_TTL_S // 60} min."}
+            "max_shares": max_sh, "warnings": warnings, "trade_note_sent": form["TradeNotes"],
+            "stocktrak_preview": " ".join(preview_text.split())[:1200],
+            "next": (f"Show the user the summary{' AND the warnings' if warnings else ''}; then "
+                     f"hedgehog_place_order(preview_id='{pid}'). Valid {PREVIEW_TTL_S // 60} min.")}
 
 _reg("hedgehog_preview_order",
      "Validate an equity or option order against the game rules and StockTrak's own preview (no order is "
@@ -168,6 +215,65 @@ _reg("hedgehog_preview_spread",
       "required": ["spread_type", "symbol", "legs", "trade_note"], "additionalProperties": False}, _preview_spread)
 
 
+# After placing, re-read the position this many times (seconds apart) to see the fill.
+FILL_POLL_DELAYS_S: tuple[float, ...] = (2.0, 3.0, 4.0)
+
+async def _position_qty(ctx: ToolCtx, stype: str, symbol: str | None) -> float | None:
+    """Current signed quantity held of ``symbol`` (0 when flat; None if unreadable)."""
+    if not symbol:
+        return None
+    try:
+        recs = await open_positions(ctx, stype)
+    except StockTrakError:
+        return None
+    total = 0.0
+    for r in recs:
+        if str(r.get("Symbol") or "").upper() == symbol.upper():
+            q = num(r.get("Quantity"))
+            if q is None:
+                return None
+            total += q
+    return total
+
+async def _watch_fill(ctx: ToolCtx, stype: str, symbol: str | None, before: float | None, qty: int) -> dict[str, Any]:
+    """Compare the position change with the ordered quantity (status 'Filled' is not proof)."""
+    if before is None:
+        return {"check": "unavailable"}
+    after = before
+    for delay in FILL_POLL_DELAYS_S:
+        await asyncio.sleep(delay)
+        now = await _position_qty(ctx, stype, symbol)
+        if now is None:
+            return {"position_before": before, "check": "unavailable"}
+        after = now
+        if after != before:
+            break
+    change = abs(after - before)
+    change_out: float | int = int(change) if float(change).is_integer() else change
+    if change == 0:
+        check = "not_filled_yet"  # pending limit/stop, market closed, or slow to show
+    elif change == qty:
+        check = "full"
+    elif change < qty:
+        check = "partial"
+    else:
+        check = "unexpected"
+    return {"position_before": before, "position_after": after, "position_change": change_out, "check": check}
+
+async def _note_saved(ctx: ToolCtx, note: str) -> bool | None:
+    """Is the trade note in today's trade-notes export? None if the export can't be read."""
+    probe = " ".join(note.split())[:60].lower()
+    if not probe:
+        return None
+    try:
+        res = await st_call(ctx, "GET", "/account/ExportTradeNotes", {"from": today_et(), "to": today_et()})
+    except StockTrakError:
+        return None
+    rows = res.get("rows") or []
+    if not rows:
+        return None if res.get("kind") != "csv" else False
+    return any(probe in " ".join(str(c).split()).lower() for r in rows for c in r)
+
 @_guard
 async def _place_order(args: dict[str, Any], ctx: ToolCtx) -> dict[str, Any]:
     pid = str(args.get("preview_id") or "")
@@ -179,16 +285,44 @@ async def _place_order(args: dict[str, Any], ctx: ToolCtx) -> dict[str, Any]:
                                            "It counts toward your scored Hedgehog Camp game.")
     if refusal:
         return refusal
+    form = rec["payload"]
+    single = rec["kind"] != "spread"
+    pos_symbol = (form.get("OptionSymbol") or form.get("Symbol")) if single else None
+    before = await _position_qty(ctx, form["SecurityType"], pos_symbol) if single else None
     if rec["kind"] == "spread":
-        b = body_of(await st_call(ctx, "POST", "/trading/PlaceOptionSpreadsV2", json_body=rec["payload"], write=True))
+        b = body_of(await st_call(ctx, "POST", "/trading/PlaceOptionSpreadsV2", json_body=form, write=True))
     else:
-        b = body_of(await st_call(ctx, "POST", "/trading/placeorderv2", rec["payload"], write=True))
+        b = body_of(await st_call(ctx, "POST", "/trading/placeorderv2", form, write=True))
     _session(ctx).pop(pid, None)
     if not b.get("Success"):
         return fail("rejected_by_stocktrak", b.get("ErrorMessage") or b.get("error") or "order rejected", summary=rec["summary"])
-    return {"ok": True, "placed": rec["summary"], "stocktrak": text_of(b, "TradeButtonsHtml")[:600],
-            "next": "Check hedgehog_orders(view='open') for the order_id; market orders during market hours fill in seconds, "
-                    "otherwise at the next open."}
+
+    out: dict[str, Any] = {"ok": True, "order": rec["summary"], "stocktrak": " ".join(all_text(b).split())[:600]}
+    warnings: list[str] = []
+    if single:
+        qty = int(form["Quantity"])
+        text = all_text(b)
+        confirmed = next((c for s in dict.fromkeys((pos_symbol, form["Symbol"]))
+                          if (c := confirmed_quantity(text, s)) is not None), None)
+        fill = await _watch_fill(ctx, form["SecurityType"], pos_symbol, before, qty)
+        out["quantity"] = {"requested": qty, "stocktrak_confirmed": confirmed, **fill}
+        if confirmed is not None and confirmed != qty:
+            warnings.append(f"PARTIAL: StockTrak accepted {confirmed} of {qty} (it caps orders at the remaining buying "
+                            f"power). Order history will still say {qty} 'Filled'. Tell the user.")
+        if fill.get("check") == "partial":
+            warnings.append(f"PARTIAL: the position changed by {fill['position_change']}, not {qty}.")
+    note = await _note_saved(ctx, str(form.get("TradeNotes") or ""))
+    out["trade_note_saved"] = note
+    if note is False:
+        warnings.append("The trade note is not in today's trade-notes export yet (pending orders may only appear "
+                        "once filled). If the order has filled and the note is still missing from "
+                        "hedgehog_history(report='trade_notes'), attach it once with hedgehog_add_trade_note "
+                        "(order_conf from hedgehog_orders(view='history')). Don't attach it twice.")
+    out["warnings"] = warnings
+    out["next"] = ("Report quantity.requested vs quantity.stocktrak_confirmed / position_change to the user. "
+                   "Pending orders: hedgehog_orders(view='open'). Market orders fill in seconds during market hours, "
+                   "otherwise at the next open; filled shares are in hedgehog_history(report='transactions').")
+    return out
 
 _reg("hedgehog_place_order",
      "Place a previously previewed order or spread (by preview_id). Asks the user to confirm in the chat unless "

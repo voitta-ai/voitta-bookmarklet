@@ -21,7 +21,7 @@ a spread", "hedgehog quirks").
 US stocks/ETFs and options only, whole shares only, trade notes required,
 15-min delayed prices, 10,000-trade cap, ranked daily on StockTrak. Hedgehog
 Camp settles weekly: **dH = H₀ × R × S** (H₀ = token balance, R = weekly
-return %, S = consistency score in [−1, 1]; the API mislabels S as
+return as a fraction (API `weekly_return`; `weekly_return_pct` is ×100), S = consistency score in [−1, 1]; the API mislabels S as
 `sharpe_ratio`). Consistency matters as much as return. Read
 docs/02-game-rules-and-scoring.md before advising on strategy.
 
@@ -39,6 +39,16 @@ docs/02-game-rules-and-scoring.md before advising on strategy.
 * Don't exercise out-of-the-money options (StockTrak allows it; it's a sure
   loss). Selling the option is usually better than exercising it.
 * Trailing stops take a PERCENT, whatever the StockTrak UI's "$" label suggests.
+* StockTrak silently caps an order at the remaining buying power (2× leverage):
+  it may fill fewer shares than ordered while order history still says
+  "Filled" with the ordered quantity. Show the user any `warnings` from the
+  preview and place tools, and report `quantity.requested` vs
+  `quantity.stocktrak_confirmed` / `position_change` after placing. Never
+  call an order fully filled from its history status alone; in order history
+  use `filled_qty` / `partial`.
+* `hedgehog_account` may carry `warnings` (fields from different moments
+  early in the session, margin requirement not reported). Pass them on;
+  don't compute leverage or P&L from fields flagged as inconsistent.
 
 **Data hygiene.** Only the user's own account. Never collect other players'
 data or emails (some public Hedgehog endpoints leak them; don't use them).
