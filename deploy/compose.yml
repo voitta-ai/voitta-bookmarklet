@@ -1,0 +1,49 @@
+# Voitta Bookmarklet as a multi-user server (bookmarklet.voitta.ai on saturn).
+#
+#   deploy/deploy.sh <tag|branch>          build + (re)start + wait for /health
+#
+# Layout of the checkout this runs from:
+#   .env      secrets (Google sign-in client, owners, public URL) — chmod 600, not in git
+#   data/     ALL user data, bind-mounted at /data (users/, conversations.sqlite,
+#             users.sqlite, auth_secret, config/settings.json)
+#
+# Host nginx terminates TLS and proxies to 127.0.0.1:12358; nothing else is published.
+# Isolation between accounts is only what the app provides (per-user folders);
+# code run by the agent can read the whole container.
+
+name: voitta-bookmarklet
+
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: voitta-bookmarklet:${VOITTA_TAG:-local}
+    container_name: voitta-bookmarklet
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    environment:
+      VOITTA_DATA_ROOT: /data
+      VOITTA_HOST: 0.0.0.0
+      # Requests arrive from host nginx via Docker's gateway; trust its
+      # X-Forwarded-* (only nginx can reach the port — it's on 127.0.0.1).
+      FORWARDED_ALLOW_IPS: "*"
+    ports:
+      - "127.0.0.1:12358:12358"
+    volumes:
+      - ../data:/data
+    mem_limit: 8g
+    cpus: 4
+    pids_limit: 1024
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:12358/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 90s

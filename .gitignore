@@ -74,3 +74,6 @@ frontend/voitta.log
 
 # Briefcase build logs (create/update/package) — regenerated every build.
 logs/
+
+# deploy/compose.yml bind-mounts this (all user data on the server)
+/data/

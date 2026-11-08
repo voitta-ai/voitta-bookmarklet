@@ -15,7 +15,8 @@ Anthropic, OpenAI, Gemini or Requesty API key, or a Claude subscription.
 - [Other ways to run it](#other-ways-to-run-it)
   - [From source (macOS or Linux)](#from-source-macos-or-linux)
   - [macOS menu-bar app](#macos-menu-bar-app)
-  - [Shared server with Google sign-in](#shared-server-with-google-sign-in)
+  - [Shared server with accounts (Docker)](#shared-server-with-accounts-docker)
+  - [Sites Voitta may run on](#sites-voitta-may-run-on)
 - [Upgrade, back up, remove](#upgrade-back-up-remove)
 - [Configuration](#configuration)
 - [Development](#development)
@@ -133,12 +134,36 @@ Open, Copy bookmarklet, Settings (with the MCP-debug toggle), Show data
 folder, (Re)create TLS certs, Reset and Quit. `./build_app.sh` packages it as
 `Voitta Bookmarklet.app`. See [OPERATIONS.md §15](OPERATIONS.md#15-packaging--release).
 
-### Shared server with Google sign-in
+### Shared server with accounts (Docker)
 
-`./server-start.sh` sets up a headless Linux server: it builds, indexes the
-docs and serves plain HTTP for a reverse proxy that terminates TLS. Copy
-`.env.example` to `.env` and set the Google sign-in client to require login.
-Each user then gets their own data. See [OPERATIONS.md](OPERATIONS.md).
+With a Google sign-in client configured, the server is **invite only**: an admin
+adds people by email in **Settings → Users**, and each person signs in with Google
+or with a password, whichever they have (same email, same account). Owners listed
+in `VOITTA_OWNERS` are always admins. Each user gets their own settings, chats and
+files; separation beyond that is only what the container gives you.
+
+On the server, from a checkout of this repo behind a TLS-terminating reverse
+proxy that forwards to `127.0.0.1:12358`:
+
+```bash
+cp deploy/.env.example .env && chmod 600 .env   # Google client, public URL, owners
+deploy/deploy.sh v0.2.14                        # build, start, wait for /health
+docker compose -f deploy/compose.yml exec -w /app/backend app \
+  .venv/bin/python -m app.users seed --password 'initial-pw' alice@x.com bob@y.org
+deploy/deploy.sh --rollback                     # back to the previous image
+```
+
+All user data lives in `data/` next to the checkout (mounted at `/data`); back up
+that folder. `deploy/migrate-from-host.sh` copies an older non-Docker install's data
+in once. `./server-start.sh` still runs the same server without Docker. See
+[OPERATIONS.md](OPERATIONS.md).
+
+### Sites Voitta may run on
+
+The widget only works on sites you've approved, on the desktop app and the server
+alike: the first time you open it on a new site it asks you to **Connect this
+site**, and a small Voitta window asks you to allow it. Remove sites in
+**Settings → Account**. This stops other pages you visit from driving your agent.
 
 ## Upgrade, back up, remove
 
