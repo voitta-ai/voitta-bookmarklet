@@ -15,6 +15,21 @@ import pytest
 from app.reports import paths, render_events
 
 
+@pytest.fixture(autouse=True)
+def _isolated_users_and_loopback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    """Keep users.sqlite in tmp (never the developer's real data dir) and let
+    Starlette's TestClient host ("testserver") pass the desktop loopback-Host
+    check, which otherwise (correctly) refuses non-loopback Hosts."""
+    from app.services import passwords, site_check, users
+
+    monkeypatch.setattr(users, "db_path", lambda: tmp_path / "users.sqlite")
+    monkeypatch.setattr(passwords, "N", 2**10)
+    monkeypatch.setattr(site_check, "LOOPBACK_HOSTS", site_check.LOOPBACK_HOSTS | {"testserver"})
+    users.reset_for_tests()
+    yield
+    users.reset_for_tests()
+
+
 @pytest.fixture
 def scripts_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """A temp ``scripts/`` root, swapped into the paths module."""

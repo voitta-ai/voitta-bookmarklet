@@ -140,8 +140,9 @@ _RELAY_JS = r"""(function () {
       sendBoot();
       return;
     }
-    // After handshake, only accept messages from the pinned origin.
-    if (openerOrigin && e.origin !== openerOrigin) return;
+    // Nothing is relayed before the handshake, and after it only messages
+    // from the pinned origin are accepted.
+    if (!openerOrigin || e.origin !== openerOrigin) return;
 
     if (d.t === "fetch") handleFetch(d);
     else if (d.t === "ws-open") handleWsOpen(d);
@@ -155,12 +156,32 @@ _RELAY_JS = r"""(function () {
     }
   });
 
+  // Every relayed request is tagged with the opener's browser-verified
+  // origin (X-Voitta-Via / ?voitta_via=) so the backend applies that site's
+  // approval, not ours (app.services.site_check). Only same-origin targets.
+  function viaUrl(raw) {
+    var u = new URL(raw, location.href);
+    if (u.origin !== location.origin) return null;
+    u.searchParams.delete("voitta_via");
+    return u;
+  }
+  function viaHeaders(h) {
+    var out = {};
+    if (h) Object.keys(h).forEach(function (k) {
+      if (k.toLowerCase() !== "x-voitta-via") out[k] = h[k];
+    });
+    out["X-Voitta-Via"] = openerOrigin;
+    return out;
+  }
+
   function handleFetch(d) {
-    var opts = { method: d.method || "GET", headers: d.headers || {} };
+    var target = viaUrl(d.url);
+    if (!target) { toOpener({ v: V, t: "fetch-res", id: d.id, error: "bridge: cross-origin target" }); return; }
+    var opts = { method: d.method || "GET", headers: viaHeaders(d.headers), credentials: "include" };
     if (d.body != null && opts.method !== "GET" && opts.method !== "HEAD") {
       opts.body = d.body;            // ArrayBuffer (or null)
     }
-    fetch(d.url, opts).then(function (r) {
+    fetch(target.href, opts).then(function (r) {
       return r.arrayBuffer().then(function (buf) {
         var headers = {};
         r.headers.forEach(function (v, k) { headers[k] = v; });
@@ -175,8 +196,14 @@ _RELAY_JS = r"""(function () {
   }
 
   function handleWsOpen(d) {
-    var ws;
-    try { ws = d.protocols ? new WebSocket(d.url, d.protocols) : new WebSocket(d.url); }
+    var ws, wu;
+    try {
+      wu = new URL(d.url, location.href);
+      var same = (wu.protocol === "wss:" ? "https:" : "http:") + "//" + wu.host;
+      if (same !== location.origin) throw new Error("cross-origin socket");
+      wu.searchParams.set("voitta_via", openerOrigin);
+      ws = d.protocols ? new WebSocket(wu.href, d.protocols) : new WebSocket(wu.href);
+    }
     catch (err) { toOpener({ v: V, t: "ws-event", id: d.id, event: "error" }); return; }
     ws.binaryType = "arraybuffer";
     sockets[d.id] = ws;

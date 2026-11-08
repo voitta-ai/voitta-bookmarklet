@@ -11,7 +11,7 @@ import { saveSettings, AGENT_SDK_PROVIDER } from "./lib/settings";
 import { useAuth } from "./lib/auth";
 import { DOG_ICON_DATA_URI } from "./lib/dogIcon";
 import ChatPane from "./ChatPane";
-import SettingsView, { ROUTINES_TAB } from "./SettingsView";
+import SettingsView, { ACCOUNT_TAB, ROUTINES_TAB, USERS_TAB } from "./SettingsView";
 import AlarmClock from "./AlarmClock";
 import CallFnRouter from "./lib/CallFnRouter";
 import ReportPane from "./report/ReportPane";
@@ -69,7 +69,17 @@ function avatarInitials(email: string): string {
 // Logged-in account avatar + logout dropdown (server mode only — hidden when
 // no email). The circle replaces the full-width email in the bar to save space;
 // the email moves into the dropdown.
-function UserMenu({ email, onLogout }: { email: string; onLogout: () => void }) {
+function UserMenu({
+  email,
+  isAdmin,
+  onLogout,
+  onOpen,
+}: {
+  email: string;
+  isAdmin: boolean;
+  onLogout: () => void;
+  onOpen: (tab: string) => void;
+}) {
   const [open, setOpen] = useState(false);
   return (
     <div className="user-menu">
@@ -87,6 +97,14 @@ function UserMenu({ email, onLogout }: { email: string; onLogout: () => void }) 
           <div className="user-menu-backdrop" onClick={() => setOpen(false)} />
           <div className="user-menu-menu">
             <div className="user-menu-account" title={email}>{email}</div>
+            {isAdmin && (
+              <button className="user-menu-item" type="button" onClick={() => { setOpen(false); onOpen(USERS_TAB); }}>
+                Manage users
+              </button>
+            )}
+            <button className="user-menu-item" type="button" onClick={() => { setOpen(false); onOpen(ACCOUNT_TAB); }}>
+              Account &amp; sites
+            </button>
             <button
               className="user-menu-item"
               type="button"
@@ -390,7 +408,17 @@ export default function Drawer({ backendOrigin }: Props) {
             />
           )}
           <span className="spacer" />
-          {auth.email && <UserMenu email={auth.email} onLogout={auth.logout} />}
+          {auth.email && (
+            <UserMenu
+              email={auth.email}
+              isAdmin={auth.isAdmin}
+              onLogout={auth.logout}
+              onOpen={(tab) => {
+                setSettingsTarget((t) => ({ tab, n: t.n + 1 }));
+                setView("settings");
+              }}
+            />
+          )}
           {view === "chat" && (
             <>
               <ProjectChip

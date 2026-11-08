@@ -211,6 +211,10 @@ def _compose_system_prompt(host: str | None) -> str:
     return compose(host)
 
 
+class SessionEnded(Exception):
+    """The signed-in session behind this chat was revoked, or its user disabled."""
+
+
 def _apply_current_user() -> str | None:
     """Set the current-user contextvar from Chainlit's authenticated session
     user (server mode) so per-user paths AND per-user settings.json resolve
@@ -218,15 +222,38 @@ def _apply_current_user() -> str | None:
 
     Called at the top of every chat entry point — on_chat_start / _resume read
     settings before on_message runs, so setting it only in on_message would
-    make those earlier reads hit the shared settings file in server mode."""
+    make those earlier reads hit the shared settings file in server mode.
+
+    Server mode: re-checks the session in users.sqlite and raises
+    :class:`SessionEnded` if it was revoked or the user disabled, so an open
+    chat stops at its next message (the HTTP guard only sees the handshake)."""
     from app.services.current_user import set_current_email
     try:
         user = cl.user_session.get("user")
         email = getattr(user, "identifier", None) if user else None
+        meta = (getattr(user, "metadata", None) or {}) if user else {}
     except Exception:
-        email = None
+        email, meta = None, {}
+    from app.services import login_auth, users
+    if login_auth.is_enabled():
+        if not email or not users.session_ok(email, meta.get("sid")):
+            set_current_email(None)
+            raise SessionEnded()
     set_current_email(email)
     return email
+
+
+async def _signed_out_notice() -> None:
+    try:
+        await cl.Message(content="You've been signed out of Voitta. Sign in again to continue.",
+                         author="Voitta").send()
+    except Exception:
+        pass
+    try:
+        from chainlit.context import context
+        await context.session.emit("voitta:signed_out", {})
+    except Exception:
+        pass
 
 
 @cl.on_chat_start
@@ -244,7 +271,11 @@ async def on_chat_start() -> None:
         sid = "?"
     logger.info("on_chat_start: sid=%s", sid)
 
-    email = _apply_current_user()
+    try:
+        email = _apply_current_user()
+    except SessionEnded:
+        await _signed_out_notice()
+        return
 
     # A fresh pane starts a brand-new SDK session on its next turn — unless a
     # history pick is latched (the pick's select route fired just before the
@@ -324,7 +355,11 @@ async def on_chat_resume(thread: ThreadDict) -> None:
     reconstruct the in-memory LLM message list so the agent has the
     conversation context for the next user turn.
     """
-    _apply_current_user()
+    try:
+        _apply_current_user()
+    except SessionEnded:
+        await _signed_out_notice()
+        return
     user_settings = load_user_settings()
     provider = user_settings.get("provider", "anthropic")
     api_keys = user_settings.get("api_keys") or {}
@@ -388,7 +423,11 @@ async def on_message(user_msg: cl.Message) -> None:
     # sandbox, so tool file writes land in the right folder too. Reset in
     # finally to avoid bleed across turns sharing this task's context.
     from app.services.current_user import set_current_email
-    email = _apply_current_user()
+    try:
+        email = _apply_current_user()
+    except SessionEnded:
+        await _signed_out_notice()
+        return
 
     try:
         await _run_message_turn(user_msg, email)

@@ -18,6 +18,9 @@ import PluginActivationPanel from "./settings/PluginActivationPanel";
 import PluginSettingsPanel from "./settings/PluginSettingsPanel";
 import RoutinesPanel from "./settings/RoutinesPanel";
 import MCPSettingsPanel from "./settings/MCPSettingsPanel";
+import AccountPanel from "./settings/AccountPanel";
+import UsersPanel from "./settings/UsersPanel";
+import { useAuth } from "./lib/auth";
 import type {
   CustomPanelProps,
   PluginConnectorStatus,
@@ -33,6 +36,8 @@ interface Props {
 }
 
 export const ROUTINES_TAB = "__routines__";
+export const USERS_TAB = "__users__";
+export const ACCOUNT_TAB = "__account__";
 
 // Eager-globbed custom settings panels. Each plugin's
 // ``frontend/settings-panel.tsx`` exports a default React component
@@ -68,6 +73,8 @@ export default function SettingsView({ backendOrigin, onClose, initialTab, routi
   const [activeTab, setActiveTab] = useState<string>(initialTab ?? "global");
   const [refreshBusy, setRefreshBusy] = useState<Record<string, boolean>>({});
   const [loadErr, setLoadErr] = useState<string | null>(null);
+  const auth = useAuth();
+  const showUsers = auth.enabled && auth.isAdmin;
 
   const fetchPlugins = useCallback(() => {
     fetch(`${backendOrigin}/api/plugins`, { credentials: "include" })
@@ -135,6 +142,7 @@ export default function SettingsView({ backendOrigin, onClose, initialTab, routi
         plugins={tabbedPlugins}
         active={activeTab}
         onChange={setActiveTab}
+        showUsers={showUsers}
       />
 
       <div className="settings-tab-body" style={{ marginTop: 12 }}>
@@ -158,7 +166,9 @@ export default function SettingsView({ backendOrigin, onClose, initialTab, routi
             createNew={routineFocus?.createNew}
           />
         )}
-        {activeTab !== "global" && activeTab !== ACTIVATION_TAB && activeTab !== ROUTINES_TAB && activeTab !== MCP_TAB && (
+        {activeTab === USERS_TAB && showUsers && <UsersPanel backendOrigin={backendOrigin} />}
+        {activeTab === ACCOUNT_TAB && <AccountPanel backendOrigin={backendOrigin} />}
+        {![ "global", ACTIVATION_TAB, ROUTINES_TAB, MCP_TAB, USERS_TAB, ACCOUNT_TAB ].includes(activeTab) && (
           <PluginTabBody
             pluginName={activeTab}
             plugin={tabbedPlugins.find((p) => p.name === activeTab)}
@@ -195,16 +205,20 @@ function TabStrip({
   plugins,
   active,
   onChange,
+  showUsers,
 }: {
   plugins: PluginInfo[];
   active: string;
   onChange: (name: string) => void;
+  showUsers: boolean;
 }) {
   const tabs: { id: string; label: string }[] = [
     { id: "global", label: "Global" },
     { id: ACTIVATION_TAB, label: "Plugins" },
     { id: MCP_TAB, label: "MCP" },
     { id: ROUTINES_TAB, label: "Routines" },
+    ...(showUsers ? [{ id: USERS_TAB, label: "Users" }] : []),
+    { id: ACCOUNT_TAB, label: "Account" },
     ...plugins.map((p) => ({ id: p.name, label: p.agent_name || p.name })),
   ];
   return (

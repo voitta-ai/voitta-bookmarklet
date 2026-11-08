@@ -1,32 +1,27 @@
-"""Server-mode login — "Sign in with Google".
+"""Server-mode sign-in: Google and email + password, invite only.
 
-Distinct from ``app.services.google_oauth`` (that one grants the LLM
-Drive/Sheets data access and stores tokens in settings.json). This module
-only answers one question: *is the caller a Google account that completed
-sign-in?* On success the callback mints a **Chainlit** JWT (the standard
-``access_token`` cookie) carrying the account email as the user identifier.
+Who may get in is decided by :mod:`app.services.users` (invited emails + ``VOITTA_OWNERS``).
+This module does the Google OAuth flow and the session token.
 
-There is a single source of truth for identity: that Chainlit JWT. Our HTTP
-guard (app.main._AuthGuard) verifies the same cookie, and Chainlit verifies
-it for /chainlit — so conversation isolation is enforced natively by
-Chainlit (per-user threads, ownership checks) with no separate session
-cookie of our own.
+Identity has one source of truth: the Chainlit JWT (``access_token`` cookie). It carries the email
+as the user identifier and the session id (``sid``) in its metadata. Our HTTP guard
+(app.main._AuthGuard) verifies it and re-checks the session in users.sqlite on every request;
+Chainlit verifies the same cookie for /chainlit, so conversation isolation stays native.
 
-Activation is purely env-driven. Login is ON iff both
-``VOITTA_GOOGLE_AUTH_CLIENT_ID`` and ``VOITTA_GOOGLE_AUTH_CLIENT_SECRET``
-are present — which only happens on a server (.env), never in the macOS
-bundle or local dev. app.config sets CHAINLIT_CUSTOM_AUTH + the JWT secret
-+ SameSite=None in that case, flipping Chainlit's require_login() on.
+Activation is env-driven: sign-in is ON iff ``VOITTA_GOOGLE_AUTH_CLIENT_ID`` and
+``VOITTA_GOOGLE_AUTH_CLIENT_SECRET`` are set (a server .env; never the macOS bundle). The redirect
+URI is ``{VOITTA_PUBLIC_BASE_URL}/api/auth/google/callback``.
 
-Policy for now: anyone who can complete Google sign-in is allowed (no
-email allow-list). The redirect URI is ``{VOITTA_PUBLIC_BASE_URL}/api/
-auth/google/callback`` and must be registered for the OAuth client in the
-Google Cloud console.
+Google flow (as in voitta-robot-war): PKCE (S256), a state value bound to the browser by a
+short-lived cookie, and the ID token's aud / iss / exp / email_verified checked before the email is
+trusted. The token comes straight from Google's token endpoint over TLS, so its signature isn't
+re-verified.
 """
 
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
 import secrets
@@ -36,20 +31,17 @@ from urllib.parse import urlencode
 
 import httpx
 
-# ---- Google OAuth (openid + email only — we just need identity) ----------
-
 AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 SCOPES = ["openid", "email"]
+ISSUERS = {"accounts.google.com", "https://accounts.google.com"}
+STATE_COOKIE = "voitta_oauth_state"
+STATE_TTL_S = 10 * 60
 
 
 def is_enabled() -> bool:
-    """True iff login is active (server mode). Gated on the presence of the
-    dedicated Google login client credentials."""
-    return bool(
-        os.getenv("VOITTA_GOOGLE_AUTH_CLIENT_ID")
-        and os.getenv("VOITTA_GOOGLE_AUTH_CLIENT_SECRET")
-    )
+    """True iff sign-in is active (server mode)."""
+    return bool(os.getenv("VOITTA_GOOGLE_AUTH_CLIENT_ID") and os.getenv("VOITTA_GOOGLE_AUTH_CLIENT_SECRET"))
 
 
 def _client() -> tuple[str, str]:
@@ -65,24 +57,35 @@ def redirect_uri() -> str:
     return f"{base}/api/auth/google/callback"
 
 
+def _b64(b: bytes) -> str:
+    return base64.urlsafe_b64encode(b).rstrip(b"=").decode()
+
+
 def _unb64(s: str) -> bytes:
     return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
 
 
-# ---- identity from the Chainlit JWT cookie --------------------------------
+# ── session token (Chainlit JWT) ─────────────────────────────────────────
 
 
-def email_from_cookie_header(cookie_header: str | None) -> str | None:
-    """Return the authenticated email by verifying the Chainlit ``access_token``
-    JWT in a raw ``Cookie:`` header. Single source of truth for identity,
-    shared by the HTTP guard and ``/api/auth/me``. None if absent/invalid."""
+def mint_token(email: str, sid: str, method: str) -> str:
+    from chainlit.auth.jwt import create_jwt
+    from chainlit.user import User
+
+    return create_jwt(User(identifier=email, metadata={"sid": sid, "m": method}))
+
+
+def identity_from_cookie_header(cookie_header: str | None) -> tuple[str | None, str | None]:
+    """``(email, sid)`` from a verified Chainlit ``access_token`` JWT in a raw ``Cookie:``
+    header, or ``(None, None)``. Does NOT check the session is still live — see
+    :func:`app.services.users.session_ok`."""
     if not cookie_header:
-        return None
+        return None, None
     try:
         jar = SimpleCookie()
         jar.load(cookie_header)
     except Exception:
-        return None
+        return None, None
     cookies = {k: m.value for k, m in jar.items()}
     try:
         from chainlit.auth.cookie import get_token_from_cookies
@@ -90,53 +93,74 @@ def email_from_cookie_header(cookie_header: str | None) -> str | None:
 
         token = get_token_from_cookies(cookies)
         if not token:
-            return None
+            return None, None
         user = decode_jwt(token)
-        return getattr(user, "identifier", None) or None
+        email = getattr(user, "identifier", None) or None
+        sid = (getattr(user, "metadata", None) or {}).get("sid")
+        return email, (sid if isinstance(sid, str) else None)
     except Exception:
-        return None
+        return None, None
 
 
-# ---- OAuth flow -----------------------------------------------------------
+def live_email_from_cookie_header(cookie_header: str | None) -> tuple[str | None, str | None]:
+    """``(email, sid)`` only if the session is still live and the user active."""
+    email, sid = identity_from_cookie_header(cookie_header)
+    if not email:
+        return None, None
+    from app.services import users
 
-# CSRF state nonces → created_at. Consumed by the callback or GC'd after TTL.
-_pending: dict[str, float] = {}
-_PENDING_TTL_S = 10 * 60
+    return (email, sid) if users.session_ok(email, sid) else (None, None)
+
+
+# ── Google OAuth ─────────────────────────────────────────────────────────
+
+# state → (created_at, PKCE verifier). One process (uvicorn, 1 worker), so memory is enough.
+_pending: dict[str, tuple[float, str]] = {}
 
 
 def _gc_pending() -> None:
-    cutoff = time.time() - _PENDING_TTL_S
-    for k, v in list(_pending.items()):
-        if v < cutoff:
+    cutoff = time.time() - STATE_TTL_S
+    for k, (created, _) in list(_pending.items()):
+        if created < cutoff:
             _pending.pop(k, None)
 
 
 def build_authorize_url() -> tuple[str, str]:
-    """Return ``(url, state)`` for the Google consent redirect."""
+    """``(url, state)`` for the Google consent redirect (PKCE S256)."""
     cid, _ = _client()
     state = secrets.token_urlsafe(24)
+    verifier = secrets.token_urlsafe(48)
+    challenge = _b64(hashlib.sha256(verifier.encode()).digest())
     _gc_pending()
-    _pending[state] = time.time()
+    _pending[state] = (time.time(), verifier)
     params = {
         "client_id": cid,
         "redirect_uri": redirect_uri(),
         "response_type": "code",
         "scope": " ".join(SCOPES),
         "state": state,
+        "code_challenge": challenge,
+        "code_challenge_method": "S256",
         "prompt": "select_account",
     }
     return f"{AUTH_URL}?{urlencode(params)}", state
 
 
-def consume_state(state: str) -> bool:
-    """Verify + atomically remove a pending CSRF state."""
+def consume_state(state: str, cookie_state: str | None) -> str | None:
+    """Verify + atomically remove a pending state bound to this browser. Returns the PKCE
+    verifier, or None if the state is unknown, expired, or from another browser."""
     _gc_pending()
-    created = _pending.pop(state, None)
-    return created is not None and (time.time() - created) <= _PENDING_TTL_S
+    if not state or not cookie_state or not secrets.compare_digest(state, cookie_state):
+        _pending.pop(state or "", None)
+        return None
+    item = _pending.pop(state, None)
+    if item is None or time.time() - item[0] > STATE_TTL_S:
+        return None
+    return item[1]
 
 
-async def exchange_code(code: str) -> str | None:
-    """Exchange an auth code for tokens and return the account email."""
+async def exchange_code(code: str, verifier: str) -> dict:
+    """Exchange an auth code for tokens; return the ID token's claims (unchecked)."""
     cid, csec = _client()
     async with httpx.AsyncClient(timeout=30.0) as client:
         r = await client.post(
@@ -147,25 +171,43 @@ async def exchange_code(code: str) -> str | None:
                 "client_secret": csec,
                 "redirect_uri": redirect_uri(),
                 "grant_type": "authorization_code",
+                "code_verifier": verifier,
             },
         )
     if r.status_code != 200:
         raise RuntimeError(f"token exchange failed {r.status_code}: {r.text[:200]}")
-    return _email_from_id_token(r.json().get("id_token"))
+    return claims_of(r.json().get("id_token"))
 
 
-def _email_from_id_token(id_token: str | None) -> str | None:
-    """Read the email claim from a Google ID token. The JWT signature is
-    not verified — it arrived over TLS direct from Google's token endpoint,
-    so the source is trusted; we only read the payload."""
+def claims_of(id_token: str | None) -> dict:
     if not id_token or not isinstance(id_token, str):
-        return None
+        return {}
     try:
         parts = id_token.split(".")
         if len(parts) != 3:
-            return None
+            return {}
         payload = json.loads(_unb64(parts[1]).decode("utf-8"))
-        email = payload.get("email")
-        return email if isinstance(email, str) else None
+        return payload if isinstance(payload, dict) else {}
     except Exception:
-        return None
+        return {}
+
+
+def check_claims(claims: dict) -> str | None:
+    """Why these ID-token claims are not acceptable, or None."""
+    cid = os.getenv("VOITTA_GOOGLE_AUTH_CLIENT_ID")
+    if not claims:
+        return "no ID token"
+    if claims.get("aud") != cid:
+        return "issued for another app"
+    if claims.get("iss") not in ISSUERS:
+        return "not issued by Google"
+    try:
+        if float(claims.get("exp", 0)) < time.time():
+            return "expired"
+    except (TypeError, ValueError):
+        return "expired"
+    if not claims.get("sub") or not claims.get("email"):
+        return "no account id or email"
+    if claims.get("email_verified") not in (True, "true"):
+        return "email not verified by Google"
+    return None

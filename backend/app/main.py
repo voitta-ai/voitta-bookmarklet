@@ -97,21 +97,26 @@ async def _lifespan(_app: FastAPI):
 app = FastAPI(title="voitta-bookmarklet", lifespan=_lifespan)
 
 
-# ── Login guard (server mode only) ────────────────────────────────────────
-# Active iff app.services.login_auth.is_enabled() — i.e. the Google login
-# client creds are present in the env (.env), which only happens on a server,
-# never in the macOS bundle or local dev. When active, requests to data
-# endpoints must carry a valid signed session cookie; otherwise 401 (HTTP) or
-# a handshake reject (WebSocket). Left OPEN so the login UI can bootstrap:
-#   • /api/auth/*           — the login flow itself
-#   • /health               — health probe
-#   • frontend assets, /, /widget.js, /bridge/*  — so the widget can load and
-#     render its "Sign in with Google" screen
-# Guarded: /api/* (except /api/auth/*), /chainlit*, /mcp*.
+# ── Guard: sign-in (server) + site approval (both modes) ──────────────────
+# Applies to /api/* (except /api/auth/* and /api/eval/*), /chainlit*, /mcp* —
+# HTTP and the chat WebSocket alike. Left open so the widget can bootstrap:
+# /api/auth/* (sign-in, approval), /auth/* pages, /health, the frontend
+# assets, /widget.js, /bridge/*.
+#
+#  1. Which site is asking? (app.services.site_check: Origin / Sec-Fetch-Site
+#     / Referer, plus the bridge relay's X-Voitta-Via tag). Our own pages and
+#     non-browser clients (MCP, curl) pass; any other web page must be on the
+#     user's approved list; unattributable browser requests are refused.
+#  2. Server mode: a live session (Chainlit JWT + users.sqlite session row,
+#     user not disabled) or 401.
+#  3. Desktop: the Host must be loopback (stops DNS-rebinding pages from
+#     reaching 127.0.0.1 under their own name).
 #
 # Added BEFORE CORSMiddleware so CORS stays OUTER of the guard and stamps its
-# headers onto the 401 (the last add_middleware is the outermost layer).
+# headers onto the 401/403 (the last add_middleware is the outermost layer).
 from app.services import login_auth as _login_auth
+from app.services import site_check as _site_check
+from app.services import users as _users
 
 
 def _is_guarded_path(path: str) -> bool:
@@ -125,51 +130,75 @@ def _is_guarded_path(path: str) -> bool:
     )
 
 
+async def _deny(scope: Scope, send: Send, status: int, error: str, extra: dict | None = None) -> None:
+    if scope["type"] == "websocket":
+        await send({"type": "websocket.close", "code": 4000 + status})
+        return
+    import json as _json
+
+    body = _json.dumps({"error": error, **(extra or {})}).encode()
+    await send({
+        "type": "http.response.start",
+        "status": status,
+        "headers": [
+            (b"content-type", b"application/json"),
+            (b"content-length", str(len(body)).encode()),
+        ],
+    })
+    await send({"type": "http.response.body", "body": body})
+
+
 class _AuthGuard:
     def __init__(self, app: ASGIApp) -> None:
         self._app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] not in ("http", "websocket") or not _login_auth.is_enabled():
-            await self._app(scope, receive, send)
-            return
-
         # Never block CORS/PNA preflights — they carry no cookies.
-        if scope.get("method") == "OPTIONS" or not _is_guarded_path(scope.get("path", "")):
+        if (
+            scope["type"] not in ("http", "websocket")
+            or scope.get("method") == "OPTIONS"
+            or not _is_guarded_path(scope.get("path", ""))
+        ):
             await self._app(scope, receive, send)
             return
 
-        headers = {k.lower(): v for k, v in scope.get("headers", [])}
-        cookie_header = headers.get(b"cookie", b"").decode("latin-1")
-        email = _login_auth.email_from_cookie_header(cookie_header)
-        if email:
-            # Carry the identity into the request so per-user data paths
-            # (uploads serving, workspace routes, threads) resolve under this
-            # user's folder. Same task as the downstream handler, so the
-            # contextvar propagates; reset after to avoid cross-request bleed.
-            from app.services.current_user import set_current_email, reset_current_email
-            token = set_current_email(email)
-            try:
-                await self._app(scope, receive, send)
-            finally:
-                reset_current_email(token)
+        server = _login_auth.is_enabled()
+        if not server and _site_check.host_of(scope) not in _site_check.LOOPBACK_HOSTS:
+            await _deny(scope, send, 403, "bad_host")
             return
 
-        # Unauthenticated, guarded request.
-        if scope["type"] == "websocket":
-            await send({"type": "websocket.close", "code": 4401})
+        kind, origin = _site_check.classify(scope)
+        if kind == "refuse":
+            await _deny(scope, send, 403, "site_refused", {"detail": origin})
             return
-        body = b'{"error":"login_required"}'
-        await send({
-            "type": "http.response.start",
-            "status": 401,
-            "headers": [
-                (b"content-type", b"application/json"),
-                (b"content-length", str(len(body)).encode()),
-            ],
-        })
-        await send({"type": "http.response.body", "body": body})
 
+        email = None
+        if server:
+            headers = {k.lower(): v for k, v in scope.get("headers", [])}
+            email, _sid = _login_auth.live_email_from_cookie_header(
+                headers.get(b"cookie", b"").decode("latin-1")
+            )
+            if not email:
+                await _deny(scope, send, 401, "login_required")
+                return
+        owner = email or _users.LOCAL_OWNER
+        if kind == "site" and not _users.site_approved(owner, origin):
+            await _deny(scope, send, 403, "site_not_approved", {"origin": origin})
+            return
+
+        if not email:
+            await self._app(scope, receive, send)
+            return
+        # Carry the identity into the request so per-user data paths
+        # (uploads serving, workspace routes, threads) resolve under this
+        # user's folder. Same task as the downstream handler, so the
+        # contextvar propagates; reset after to avoid cross-request bleed.
+        from app.services.current_user import set_current_email, reset_current_email
+        token = set_current_email(email)
+        try:
+            await self._app(scope, receive, send)
+        finally:
+            reset_current_email(token)
 
 app.add_middleware(_AuthGuard)
 
@@ -251,6 +280,9 @@ app.add_middleware(_PNAMiddleware)
 
 from app.bridge import router as bridge_router
 from app.routes.auth import router as auth_router
+from app.routes.auth_pages import router as auth_pages_router
+from app.routes.account import router as account_router
+from app.routes.admin import router as admin_router
 from app.routes.google import router as google_router
 from app.routes.html_report import router as html_report_router
 from app.routes.models import router as models_router
@@ -264,6 +296,9 @@ from app.routes.projects import router as projects_router
 from app.routes.routines import router as routines_router
 
 app.include_router(auth_router)
+app.include_router(auth_pages_router)
+app.include_router(account_router)
+app.include_router(admin_router)
 app.include_router(projects_router)
 app.include_router(routines_router)
 app.include_router(reports_router)
