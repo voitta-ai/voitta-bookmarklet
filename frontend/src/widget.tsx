@@ -42,6 +42,12 @@ function deriveBackendOrigin(): string {
   return window.location.origin;
 }
 
+// Resolve now, while this script is executing: document.currentScript is
+// null by the time a deferred mount() runs (widget.js included as a plain
+// <script> while the page is still parsing → mount waits for
+// DOMContentLoaded), and the fallback would wrongly use the page's origin.
+const BACKEND_ORIGIN = deriveBackendOrigin();
+
 function mount(): void {
   if (document.getElementById(HOST_ID)) return;
 
@@ -79,7 +85,7 @@ function mount(): void {
     getShadowRoot: () => shadow,
   };
 
-  const backendOrigin = deriveBackendOrigin();
+  const backendOrigin = BACKEND_ORIGIN;
   const root = createRoot(mountPoint);
   root.render(<App backendOrigin={backendOrigin} />);
 }
