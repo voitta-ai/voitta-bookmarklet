@@ -231,16 +231,41 @@ def _apply_current_user() -> str | None:
     try:
         user = cl.user_session.get("user")
         email = getattr(user, "identifier", None) if user else None
-        meta = (getattr(user, "metadata", None) or {}) if user else {}
     except Exception:
-        email, meta = None, {}
+        email = None
     from app.services import login_auth, users
     if login_auth.is_enabled():
-        if not email or not users.session_ok(email, meta.get("sid")):
+        if not email or not users.session_ok(email, _session_sid()):
             set_current_email(None)
             raise SessionEnded()
     set_current_email(email)
     return email
+
+
+def _socket_token() -> str | None:
+    """The raw JWT this chat's socket connected with (Chainlit keeps it on the session)."""
+    from chainlit.context import context
+
+    return getattr(context.session, "token", None)
+
+
+def _session_sid() -> str | None:
+    """The sign-in session id, read from the socket's own JWT.
+
+    Not from ``cl.user_session["user"].metadata``: with a data layer, Chainlit
+    replaces the JWT's user with the *persisted* user row (created on that
+    person's first-ever sign-in), whose metadata never carries the current
+    session id."""
+    try:
+        from chainlit.auth.jwt import decode_jwt
+
+        token = _socket_token()
+        if not token:
+            return None
+        sid = (getattr(decode_jwt(token), "metadata", None) or {}).get("sid")
+        return sid if isinstance(sid, str) else None
+    except Exception:
+        return None
 
 
 async def _signed_out_notice() -> None:

@@ -302,3 +302,45 @@ def test_pages_cannot_be_framed(server):
         r = server.get(path)
         assert r.status_code == 200
         assert "frame-ancestors 'none'" in r.headers["content-security-policy"]
+
+
+# ── chat side: session id comes from the socket's JWT, not the persisted user ──
+
+
+def _chat_ctx(monkeypatch, token: str | None, persisted_meta: dict):
+    """Fake what Chainlit hands a chat handler on saturn: the persisted user row
+    (metadata from that person's first-ever sign-in) + the socket's raw JWT."""
+    import chainlit as cl
+    from chainlit.user import User
+
+    from app import chainlit_app
+
+    user = User(identifier="ana@x.com", metadata=persisted_meta)
+    monkeypatch.setattr(cl.user_session, "get", lambda key, default=None: user if key == "user" else default)
+    monkeypatch.setattr(chainlit_app, "_socket_token", lambda: token)
+
+
+def test_chat_check_uses_the_socket_token_not_the_persisted_user(server, monkeypatch):
+    from app import chainlit_app
+
+    sid = users.new_session(users.get("ana@x.com"), "password")
+    token = login_auth.mint_token("ana@x.com", sid, "password")
+    _chat_ctx(monkeypatch, token, persisted_meta={})  # stored row has no sid — the saturn bug
+    assert chainlit_app._apply_current_user() == "ana@x.com"
+
+    users.revoke(sid)
+    with pytest.raises(chainlit_app.SessionEnded):
+        chainlit_app._apply_current_user()
+
+
+def test_chat_check_ignores_a_stale_sid_in_persisted_metadata(server, monkeypatch):
+    from app import chainlit_app
+
+    old = users.new_session(users.get("ana@x.com"), "password")
+    users.revoke(old)
+    new = users.new_session(users.get("ana@x.com"), "google")
+    _chat_ctx(monkeypatch, login_auth.mint_token("ana@x.com", new, "google"), persisted_meta={"sid": old})
+    assert chainlit_app._apply_current_user() == "ana@x.com"
+    _chat_ctx(monkeypatch, None, persisted_meta={"sid": new})  # no token → no session
+    with pytest.raises(chainlit_app.SessionEnded):
+        chainlit_app._apply_current_user()

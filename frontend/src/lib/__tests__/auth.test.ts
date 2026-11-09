@@ -42,8 +42,29 @@ describe("openApprove", () => {
     fromPopup(win, { t: "voitta-approve-hello" }, "https://evil.example");
     window.dispatchEvent(new MessageEvent("message", { data: { t: "voitta-approve-hello" }, origin: BACKEND }));
     expect(sent).toEqual([]);
-    (win as unknown as { closed: boolean }).closed = true; // user closes it → still resolves
+    // user closes it (or Google's COOP cut it off) → this page regains focus → resolves
+    vi.spyOn(Date, "now").mockReturnValue(Date.now() + 1000);
+    window.dispatchEvent(new Event("focus"));
     await expect(done).resolves.toBeUndefined();
+  });
+
+  it("never reads popup.closed (Google's COOP makes Chrome warn on every read)", async () => {
+    let reads = 0;
+    const win = {
+      get closed() {
+        reads++;
+        return false;
+      },
+      postMessage: () => {},
+    } as unknown as Window;
+    vi.spyOn(window, "open").mockReturnValue(win);
+    vi.useFakeTimers();
+    const done = openApprove(BACKEND);
+    vi.advanceTimersByTime(5000);
+    expect(reads).toBe(0);
+    fromPopup(win, { t: "voitta-site-approved" });
+    await expect(done).resolves.toBeUndefined();
+    vi.useRealTimers();
   });
 });
 

@@ -81,9 +81,15 @@ export async function logout(backendOrigin: string): Promise<void> {
   }
 }
 
-// Open a popup on the backend and resolve when it's done: it posts one of
-// `doneMessages` to us, or (fallback, e.g. after Google's COOP severs the
-// opener) the user closes it. `onMessage` may answer handshakes.
+// Open a popup on the backend and resolve when it's done: it posts a done
+// message to us, or the user comes back to this page (its window regains
+// focus — the popup closed itself or was closed). We never poll `win.closed`:
+// Google's sign-in page sets Cross-Origin-Opener-Policy, which severs the
+// popup from us, so the browser warns on (and may block) every such read, and
+// the done message can't arrive either — focus is the signal that still works.
+// `onMessage` may answer handshakes.
+const POPUP_TIMEOUT_MS = 15 * 60_000;
+
 function popup(
   backendOrigin: string,
   path: string,
@@ -93,23 +99,33 @@ function popup(
 ): Promise<void> {
   return new Promise((resolve) => {
     const win = window.open(`${backendOrigin}${path}`, name, "width=480,height=640");
+    if (!win) {
+      resolve(); // popup blocked
+      return;
+    }
     let done = false;
     const finish = () => {
       if (done) return;
       done = true;
       window.removeEventListener("message", onMsg);
-      clearInterval(poll);
+      window.removeEventListener("focus", onFocus);
+      clearTimeout(timer);
       resolve();
     };
     const onMsg = (e: MessageEvent) => {
-      if (!win || e.source !== win || e.origin !== new URL(backendOrigin).origin) return;
+      if (e.source !== win || e.origin !== new URL(backendOrigin).origin) return;
       onMessage?.(e, win);
       if (isDone(e.data)) finish();
     };
+    // Opening the popup blurs this window; ignore any focus event that races in
+    // before that has happened.
+    const armedAt = Date.now() + 500;
+    const onFocus = () => {
+      if (Date.now() > armedAt) finish();
+    };
     window.addEventListener("message", onMsg);
-    const poll = window.setInterval(() => {
-      if (!win || win.closed) finish();
-    }, 600);
+    window.addEventListener("focus", onFocus);
+    const timer = window.setTimeout(finish, POPUP_TIMEOUT_MS);
   });
 }
 
