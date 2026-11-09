@@ -215,9 +215,12 @@ def is_available() -> bool:
     """
     import importlib.util
 
-    if _cli_path_cached() is None:
-        return False
     try:
-        return importlib.util.find_spec("claude_agent_sdk") is not None
+        if importlib.util.find_spec("claude_agent_sdk") is None:
+            return False
     except Exception:
         return False
+    # Either engine will do: the one bundled in the SDK wheel (all a Docker
+    # image has — no system `claude` there) or a system install (desktop).
+    # Same pair _select_engine() picks from when a turn actually runs.
+    return _bundled_engine() is not None or _cli_path_cached() is not None
