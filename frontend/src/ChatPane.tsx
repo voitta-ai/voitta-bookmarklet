@@ -12,7 +12,7 @@ import {
   useChatInteract,
   useChatMessages,
 } from "@chainlit/react-client";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRecoilValue, useSetRecoilState } from "recoil";
 import MessageList from "./chat/MessageList";
 import Composer from "./chat/Composer";
@@ -22,6 +22,8 @@ import type { ImageAttachment } from "./lib/image-attach";
 import { encodeFiles } from "./lib/attachments";
 import { useAuthConnect } from "./lib/useAuthConnect";
 import { useRoutineScheduler } from "./lib/useRoutineScheduler";
+import { setChatHandle } from "./lib/notices";
+import NoticeStack from "./chat/NoticeStack";
 
 // One row of /api/agent_sdk/sessions/{id}/messages (see
 // backend/app/services/agent_sdk/sessions.py:_transcript_rows).
@@ -223,6 +225,21 @@ export default function ChatPane({
     send: (text) => sendMessage({ output: text, name: "user", type: "user_message" }, []),
   });
 
+  // Let notice buttons (plugin banners) send a message as the user while
+  // this chat is idle. A pending question counts as busy: a new message
+  // would start a second, concurrent turn.
+  const sendRef = useRef(sendMessage);
+  sendRef.current = sendMessage;
+  const chatBusy = busy || !!askUser;
+  const sendFromNotice = useCallback(
+    (text: string) => sendRef.current({ output: text, name: "user", type: "user_message" }, []),
+    [],
+  );
+  useEffect(() => {
+    setChatHandle({ busy: chatBusy, send: sendFromNotice });
+  }, [chatBusy, sendFromNotice]);
+  useEffect(() => () => setChatHandle(null), []);
+
   async function onAttach(files: File[]) {
     const encoded = await encodeFiles(files);
     if (encoded.length) setAttachments((prev) => [...prev, ...encoded]);
@@ -277,6 +294,7 @@ export default function ChatPane({
         }
       />
       <TokenPromptModal />
+      <NoticeStack />
       {askQuestions && askUser && (
         <QuestionCard
           key={askUser.spec.step_id}

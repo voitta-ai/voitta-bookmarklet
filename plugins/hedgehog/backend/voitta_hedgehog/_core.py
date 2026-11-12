@@ -13,8 +13,10 @@ Envelope convention (same as the other plugins):
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
+import time
 from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -30,10 +32,28 @@ _logger = logging.getLogger(__name__)
 PLUGIN = "hedgehog"
 ET = ZoneInfo("America/New_York")
 
+_NO_WRITE_RETRY = (
+    " Do NOT retry orders, notes, edits, cancels or exercises on your own. When the user says they're back: "
+    "first check hedgehog_orders (open and history) for anything already placed, then re-preview; every "
+    "order needs the user's confirmation again."
+)
 HINTS = {
     "session_expired": (
-        "The StockTrak session has expired. Ask the user to sign in at app.stocktrak.com "
-        "(tick 'Remember me'), then retry once. Do not loop."
+        "The StockTrak session has expired (a banner in the chat already asks the user to log in again in a new "
+        "tab). Stop and tell the user; wait for them." + _NO_WRITE_RETRY
+    ),
+    "site_check": (
+        "StockTrak's bot check (Incapsula) answered instead of StockTrak. The banner asks the user to open "
+        "StockTrak in a new tab, which passes the check. Stop and wait for the user." + _NO_WRITE_RETRY
+    ),
+    "unexpected_page": (
+        "StockTrak returned a web page instead of data. Possibly a logout, an outage or a changed endpoint. "
+        "Try one read-only call (hedgehog_inspect_page); if that fails too, stop and tell the user." + _NO_WRITE_RETRY
+    ),
+    "tab_unreachable": (
+        "The StockTrak tab stopped answering: it navigated away (e.g. logged out by another StockTrak tab), "
+        "was closed, or the bookmarklet isn't open there. Ask the user to open StockTrak, log in if needed, and "
+        "click the bookmarklet again." + _NO_WRITE_RETRY
     ),
     "wrong_host": "Ask the user to open the bookmarklet on their app.stocktrak.com tab.",
     "server_error_page": (
@@ -76,9 +96,43 @@ async def st_call(
     if json_body is not None:
         args["json_body"] = json_body
     try:
-        return await call_browser("hedgehog_request", args, ctx, timeout_ms=timeout_ms)
+        # Our own deadline: Chainlit's call_fn waits 5 minutes and then returns None (no error) when
+        # the tab is gone — e.g. StockTrak's cross-tab logout navigated it to /logout mid-call.
+        res = await asyncio.wait_for(call_browser("hedgehog_request", args, ctx, timeout_ms=timeout_ms),
+                                     timeout=timeout_ms / 1000 + 5)
+    except asyncio.TimeoutError:
+        res = None
     except BrowserToolError as exc:
-        raise StockTrakError(exc.kind, str(exc)) from None
+        kind = "unexpected_page" if exc.kind == "bad_json" else exc.kind
+        if kind in SESSION_BREAKS:
+            note_session_break(ctx)
+        raise StockTrakError(kind, str(exc)) from None
+    if not isinstance(res, dict):
+        note_session_break(ctx)
+        what = ("The order/change may or may not have reached StockTrak. " if write else "")
+        raise StockTrakError("tab_unreachable", f"The StockTrak tab didn't answer {method} {path} within "
+                                                f"{timeout_ms // 1000 + 5} s. {what}")
+    return res
+
+
+# ── session breaks ─────────────────────────────────────────────────────────
+# After the StockTrak session drops, nothing previewed before it may be placed, and the next order
+# asks the user even when "don't ask" is on. Per chat session, in memory.
+
+SESSION_BREAKS = {"session_expired", "site_check", "unexpected_page", "tab_unreachable"}
+_breaks: dict[str, float] = {}
+
+
+def note_session_break(ctx: ToolCtx) -> None:
+    _breaks[ctx.session_id or "default"] = time.time()
+
+
+def last_session_break(ctx: ToolCtx) -> float | None:
+    return _breaks.get(ctx.session_id or "default")
+
+
+def clear_session_break(ctx: ToolCtx) -> None:
+    _breaks.pop(ctx.session_id or "default", None)
 
 
 def body_of(res: dict[str, Any]) -> dict[str, Any]:

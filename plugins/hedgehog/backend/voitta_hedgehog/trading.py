@@ -26,8 +26,8 @@ from app.tools.registry import ToolCtx, ToolSpec, registry
 from app.tools.server import ask_user
 
 from voitta_hedgehog._core import (
-    StockTrakError, all_text, body_of, confirm_orders, confirmed_quantity, fail, num, open_positions, st_call,
-    text_of, today_et, trading_enabled,
+    StockTrakError, all_text, body_of, clear_session_break, confirm_orders, confirmed_quantity, fail,
+    last_session_break, num, open_positions, st_call, text_of, today_et, trading_enabled,
 )
 from voitta_hedgehog.rules import (
     RuleError, build_order_form, build_spread_body, fingerprint, option_moneyness, option_type_from_symbol, parse_money,
@@ -54,8 +54,11 @@ def _remember(ctx: ToolCtx, kind: str, payload: dict[str, Any], summary: str) ->
 
 
 async def confirm_with_user(ctx: ToolCtx, question: str, header: str = "Order") -> dict[str, Any] | None:
-    """Ask the human; return None on an explicit go-ahead, else a refusal envelope."""
-    if not confirm_orders():
+    """Ask the human; return None on an explicit go-ahead, else a refusal envelope.
+
+    Also asks when "don't ask" is on if the StockTrak session dropped since the last confirmation:
+    the first order after a logout always needs a fresh yes."""
+    if not confirm_orders() and last_session_break(ctx) is None:
         return None
     try:
         res = await ask_user._handler({"questions": [{
@@ -70,6 +73,7 @@ async def confirm_with_user(ctx: ToolCtx, question: str, header: str = "Order") 
     chosen = res.get("response") or next(iter((res.get("answers") or {}).values()), "")
     if str(chosen).strip() != _PLACE:
         return fail("declined", "the user declined; nothing was placed", answer=chosen)
+    clear_session_break(ctx)
     return None
 
 
@@ -281,6 +285,12 @@ async def _place_order(args: dict[str, Any], ctx: ToolCtx) -> dict[str, Any]:
     if not rec or time.time() - rec["ts"] > PREVIEW_TTL_S:
         return fail("preview_required", "No fresh preview with that id in this session. Call hedgehog_preview_order "
                                         "(or hedgehog_preview_spread) first; place exactly what was previewed.")
+    broke = last_session_break(ctx)
+    if broke is not None and rec["ts"] <= broke:
+        _session(ctx).pop(pid, None)
+        return fail("preview_stale",
+                    "The StockTrak session dropped after this preview, so it was discarded. Check hedgehog_orders "
+                    "(open and history) for anything already placed, then preview again; the user must confirm.")
     refusal = await confirm_with_user(ctx, f"Place this StockTrak order? {rec['summary']}. "
                                            "It counts toward your scored Hedgehog Camp game.")
     if refusal:

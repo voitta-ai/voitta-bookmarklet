@@ -462,6 +462,35 @@ async def _my_rank(args: dict[str, Any], ctx: ToolCtx) -> dict[str, Any]:
             "top_returns_pct": pcts[:10],
             "note": "Own rank only; '0 / N' means not ranked yet (no filled trades). Other players are not listed."}
 
+@_guard
+async def _session_log(args: dict[str, Any], ctx: ToolCtx) -> dict[str, Any]:
+    from app.services import plugin_events
+
+    evs = plugin_events.read("hedgehog", int(args.get("limit") or 200))
+    logouts = [e for e in evs if e.get("type") in ("logged_out", "site_check")]
+    return {
+        "ok": True,
+        "events": evs,
+        "logouts": logouts,
+        "how_to_read": (
+            "Times are epoch ms (t = in the page, rt = received). Each logged_out event carries how it was detected "
+            "(via: redirect, login_page, http_401, http_403, cross_tab, keepalive) and minutes since the first OK "
+            "call (min_since_first_ok), since the last user activity (min_idle) and since the last keep-alive "
+            "(min_since_keepalive). Logouts that stop once keep-alive is on → inactivity timeout. A near-constant "
+            "min_since_first_ok → fixed session lifetime. via=cross_tab → another StockTrak tab logged out."
+        ),
+    }
+
+
+_reg("hedgehog_session_log",
+     "StockTrak session diagnostics recorded by the bookmarklet: page loads, first OK call, user activity, "
+     "keep-alive pings and pauses, and every detected logout or bot check with how it was detected and the "
+     "minutes since login / last activity / last keep-alive. Use it to work out why StockTrak logs the user out.",
+     {"type": "object", "properties": {"limit": {"type": "integer", "minimum": 1, "maximum": 1000, "default": 200}},
+      "additionalProperties": False},
+     _session_log)
+
+
 _reg("hedgehog_my_rank",
      "The user's StockTrak ranking in this session ('rank / players') plus the top-10 return percentages "
      "(no names). For Hedgehog Camp token standing use hedgehog_rewards.",

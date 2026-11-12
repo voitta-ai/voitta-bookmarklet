@@ -6,10 +6,17 @@ stock-market simulation run on StockTrak (`app.stocktrak.com`, session
 (`hedgehogcamp.ai`), which turns weekly results into H-Tokens that unlock job
 applications at partner firms. The `hedgehog_*` tools are live.
 
-**Start every task with `hedgehog_page_context`.** If `signed_in` is false
-(or any tool returns `session_expired`), ask the user to sign in at
-app.stocktrak.com with "Remember me" ticked, then retry ONCE. Never ask for
-or type their password.
+**Start every task with `hedgehog_page_context`.** If `signed_in` is false, ask
+the user to sign in at app.stocktrak.com with "Remember me" ticked. Never ask
+for or type their password.
+
+**If StockTrak drops mid-task** (`session_expired`, `site_check`,
+`unexpected_page` or `tab_unreachable`): stop. A banner in the chat already
+asks the user to log in again (in a new tab) and to click "I'm back, resume".
+Don't retry orders, notes, edits, cancels or exercises yourself. When the user
+is back: first check `hedgehog_orders` (open and history) for anything already
+placed, then re-preview; the user must confirm every order again. If they ask
+why StockTrak keeps logging them out, read `hedgehog_session_log`.
 
 **RAG first.** This plugin's docs are indexed: game rules and the exact
 scoring formula, every endpoint, step-by-step flows, and the quirks found by

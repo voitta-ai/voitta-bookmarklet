@@ -13,7 +13,8 @@
 // /login surfaces as PrimitiveError("session_expired").
 
 import { PrimitiveError, registerPrimitive } from "../../../frontend/src/lib/bridge";
-import { isErrorPage, isLoginPage, parseCsv, parseHtml, parseJsonBody } from "./parsers";
+import { classifyResponse, isLoginPage, parseCsv, parseHtml, parseJsonBody } from "./parsers";
+import { noteBreak, noteOk, startSession } from "./session";
 
 
 // ---- allowlist ------------------------------------------------------------
@@ -125,9 +126,11 @@ registerPrimitive("hedgehog_inspect_page", async (rawArgs) => {
     const r = await fetch("/account/closedpositions", { credentials: "same-origin" });
     const html = await r.text();
     if (isLoginPage(r.url, html)) {
+      noteBreak("session_expired", "login_page");
       base.signed_in = false;
       return base;
     }
+    noteOk();
     accountId = accountId || html.match(/name="ThisAccount\.AccountID"[^>]*value="(\d+)"/)?.[1] || null;
     tournamentId = tournamentId || html.match(/tournamentID=' \+ (\d+)/)?.[1] || null;
     base.signed_in = true;
@@ -177,26 +180,28 @@ registerPrimitive("hedgehog_request", async (rawArgs) => {
   }
 
   const started = performance.now();
-  const r = await fetch(url, { method, headers, body, credentials: "same-origin", cache: "no-store" });
+  let r: Response;
+  try {
+    r = await fetch(url, { method, headers, body, credentials: "same-origin", cache: "no-store" });
+  } catch (err) {
+    throw new PrimitiveError("network_error", `StockTrak didn't respond (${String(err)}). Check the connection.`, { path });
+  }
   const ctype = r.headers.get("content-type") || "";
+  const disp = r.headers.get("content-disposition") || "";
   const text = await r.text();
   const meta = { status: r.status, path, ms: Math.round(performance.now() - started) };
 
-  if (isLoginPage(r.url, text)) {
-    throw new PrimitiveError("session_expired", "StockTrak redirected to /login: the session has expired", meta);
+  const verdict = classifyResponse({ status: r.status, url: r.url, ctype: /attachment/i.test(disp) ? "text/csv" : ctype, text, path });
+  if (verdict.kind === "site_check") {
+    noteBreak("site_check", "site_check");
+    throw new PrimitiveError("site_check", "StockTrak's bot protection (Incapsula) answered instead of StockTrak.", meta);
   }
-  if (/csv/i.test(ctype) || /attachment/i.test(r.headers.get("content-disposition") || "")) {
-    const { rows, truncated } = capRows(parseCsv(text));
-    const disp = r.headers.get("content-disposition") || "";
-    return { ...meta, kind: "csv", filename: disp.match(/filename="?([^";]+)/)?.[1] || null, rows, truncated, csv_text: truncated ? null : text };
+  if (verdict.kind === "session_expired") {
+    noteBreak("session_expired", verdict.via);
+    throw new PrimitiveError("session_expired", `The StockTrak session has expired (${verdict.via.replace("_", " ")}).`, meta);
   }
-  if (/json/i.test(ctype)) {
-    let parsed: unknown;
-    try { parsed = JSON.parse(text); } catch { throw new PrimitiveError("bad_json", "response claimed JSON but did not parse", meta); }
-    const out = parseJsonBody(parsed, Boolean(rawArgs?.keep_html));
-    return { ...meta, kind: "json", body: out };
-  }
-  if (isErrorPage(text)) {
+  if (verdict.kind === "error_page") {
+    noteOk(); // signed in; just a bad request
     throw new PrimitiveError(
       "server_error_page",
       "StockTrak returned its 'Oops, something went wrong' page. This almost always means a missing or invalid parameter, " +
@@ -204,7 +209,37 @@ registerPrimitive("hedgehog_request", async (rawArgs) => {
       meta,
     );
   }
+  if (verdict.kind === "unexpected_page") {
+    throw new PrimitiveError(
+      "unexpected_page",
+      `StockTrak returned a web page${verdict.title ? ` ("${verdict.title}")` : ""} instead of data.`,
+      meta,
+    );
+  }
+
+  if (/csv/i.test(ctype) || /attachment/i.test(disp)) {
+    const { rows, truncated } = capRows(parseCsv(text));
+    noteOk();
+    return { ...meta, kind: "csv", filename: disp.match(/filename="?([^";]+)/)?.[1] || null, rows, truncated, csv_text: truncated ? null : text };
+  }
+  if (/json/i.test(ctype)) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      throw new PrimitiveError("unexpected_page", "StockTrak said it was sending data but sent something else (not valid JSON).", meta);
+    }
+    noteOk();
+    return { ...meta, kind: "json", body: parseJsonBody(parsed, Boolean(rawArgs?.keep_html)) };
+  }
   const parsed = parseHtml(text);
   const { rows, truncated } = capRows(parsed.rows);
+  noteOk();
   return { ...meta, kind: "html", body: { ...parsed, rows, truncated } };
 });
+
+
+// ---- session handling ---------------------------------------------------------
+// Diagnostics, logout banner, cross-tab watcher, optional keep-alive: StockTrak pages only.
+// Deferred so the widget has set its backend origin before we post anything.
+setTimeout(startSession, 0);

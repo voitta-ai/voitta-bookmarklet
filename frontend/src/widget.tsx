@@ -7,6 +7,7 @@
 import { createRoot } from "react-dom/client";
 import App from "./App";
 import { installEventGuard } from "./lib/event-guard";
+import { setBackendOrigin } from "./lib/bridge";
 import { cssText } from "./styles";
 
 // Plugin frontends — every ``plugins/**/frontend/widget.ts`` is
@@ -47,6 +48,7 @@ function deriveBackendOrigin(): string {
 // <script> while the page is still parsing → mount waits for
 // DOMContentLoaded), and the fallback would wrongly use the page's origin.
 const BACKEND_ORIGIN = deriveBackendOrigin();
+setBackendOrigin(BACKEND_ORIGIN);
 
 function mount(): void {
   if (document.getElementById(HOST_ID)) return;

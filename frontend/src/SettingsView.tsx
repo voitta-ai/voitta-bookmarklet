@@ -51,6 +51,21 @@ const CUSTOM_PANEL_MODULES = import.meta.glob<CustomPanelModule>(
   { eager: true },
 );
 
+// ``frontend/settings-extra.tsx`` is additive: rendered BELOW the generic
+// schema panel (the custom panel above replaces it instead).
+const EXTRA_PANEL_MODULES = import.meta.glob<CustomPanelModule>(
+  "../../plugins/**/frontend/settings-extra.tsx",
+  { eager: true },
+);
+
+function findExtraPanel(relDir: string) {
+  const needle = `/plugins/${relDir}/frontend/settings-extra.tsx`;
+  for (const path in EXTRA_PANEL_MODULES) {
+    if (path.endsWith(needle)) return EXTRA_PANEL_MODULES[path].default;
+  }
+  return null;
+}
+
 // Tab id for the fixed "Plugins" (activation) tab. Namespaced so a
 // plugin literally named "plugins" can't shadow it.
 const ACTIVATION_TAB = "__activation__";
@@ -283,23 +298,28 @@ function PluginTabBody({
   if (CustomPanel) {
     return <CustomPanel pluginName={plugin.name} backendOrigin={backendOrigin} />;
   }
+  const ExtraPanel = findExtraPanel(plugin.rel_dir ?? plugin.name);
+  const extra = ExtraPanel ? <ExtraPanel pluginName={plugin.name} backendOrigin={backendOrigin} /> : null;
   if (plugin.settings_schema) {
     return (
-      <PluginSettingsPanel
-        pluginName={plugin.name}
-        schema={plugin.settings_schema}
-        connectors={plugin.mcp_connectors}
-        backendOrigin={backendOrigin}
-        onRefreshConnectors={onRefresh}
-        refreshBusy={refreshBusy}
-        hosts={[
-          ...plugin.host_patterns.filter((h) => !h.includes("*")),
-          ...(plugin.extra_hosts ?? []),
-        ]}
-      />
+      <>
+        <PluginSettingsPanel
+          pluginName={plugin.name}
+          schema={plugin.settings_schema}
+          connectors={plugin.mcp_connectors}
+          backendOrigin={backendOrigin}
+          onRefreshConnectors={onRefresh}
+          refreshBusy={refreshBusy}
+          hosts={[
+            ...plugin.host_patterns.filter((h) => !h.includes("*")),
+            ...(plugin.extra_hosts ?? []),
+          ]}
+        />
+        {extra}
+      </>
     );
   }
-  return <p className="muted">This plugin has no configurable settings.</p>;
+  return extra ?? <p className="muted">This plugin has no configurable settings.</p>;
 }
 
 function LoadedPluginsFooter({

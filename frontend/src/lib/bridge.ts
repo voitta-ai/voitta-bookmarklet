@@ -26,12 +26,18 @@ export class PrimitiveError extends Error {
   }
 }
 
+// The Voitta backend this widget talks to. NOT window.location: the widget
+// runs inside other sites (app.stocktrak.com, …), so the page's own origin
+// is the host site. widget.tsx sets it at startup from widget.js's own URL.
+// Plugin code must read it lazily (after startup), not at import time.
+let backendOrigin: string | null = null;
+
+export function setBackendOrigin(origin: string): void {
+  backendOrigin = origin.replace(/\/+$/, "");
+}
+
 export function getBackendOrigin(): string {
-  // The Chainlit ChainlitAPI is constructed once with the bookmarklet's
-  // origin and stored in the React context; plugins that need to fetch
-  // BE-side assets can read it from window.location since the FE is
-  // served by the same BE.
-  return window.location.origin;
+  return backendOrigin ?? window.location.origin;
 }
 
 export function getSessionId(): string {

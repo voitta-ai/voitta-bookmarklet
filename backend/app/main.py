@@ -283,6 +283,7 @@ from app.routes.auth import router as auth_router
 from app.routes.auth_pages import router as auth_pages_router
 from app.routes.account import router as account_router
 from app.routes.admin import router as admin_router
+from app.routes.plugin_events import router as plugin_events_router
 from app.routes.google import router as google_router
 from app.routes.html_report import router as html_report_router
 from app.routes.models import router as models_router
@@ -299,6 +300,7 @@ app.include_router(auth_router)
 app.include_router(auth_pages_router)
 app.include_router(account_router)
 app.include_router(admin_router)
+app.include_router(plugin_events_router)
 app.include_router(projects_router)
 app.include_router(routines_router)
 app.include_router(reports_router)

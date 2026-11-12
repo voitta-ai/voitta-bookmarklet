@@ -76,6 +76,27 @@ Behaviour observed on the live game (2026-11-02/03) that differs from the rules 
 
 ## Session
 - The login cookie expires overnight unless "Remember me" is ticked; requests then redirect to `/login`.
+- The site runs on IIS with classic ASP.NET 4, whose server session ends after 20 minutes of inactivity by
+  default. Unconfirmed for StockTrak; the session log below is meant to settle it.
+- **Cross-tab logout:** every StockTrak page listens for a `logout-event` key in shared browser storage and
+  sends itself to `/logout` when it fires. Logging out in any StockTrak tab in the same browser logs out
+  every other StockTrak tab, including the one the bookmarklet is in. After logging in again in a new
+  tab, close that tab without logging out.
+- **Bot protection:** responses carry Imperva/Incapsula cookies (`visid_incap_*`, `incap_ses_*`). If its
+  challenge kicks in, AJAX calls get an HTML challenge page (sometimes a 403) instead of data. Opening
+  StockTrak in a new tab passes it; logging in again doesn't help.
+- **How the plugin handles drops:** every call is classified before parsing (bot check → login redirect or
+  login page → 401/403 → data → "Oops" page → unexpected page). A drop shows a banner, writes are never
+  retried, and the next order always asks.
+- **Session log** (`hedgehog_session_log`, Settings → Plugins → Hedgehog): page loads, first OK call, user
+  activity, keep-alive pings, and each logout with how it was detected and the minutes since the first OK
+  call, since the last activity and since the last keep-alive. Reading it:
+  - logouts stop once keep-alive is on → inactivity timeout
+  - roughly the same `min_since_first_ok` every time → fixed session lifetime
+  - `via: cross_tab` → another StockTrak tab logged out
+  - logouts lining up with logins elsewhere → one session per user
+- **Keep-alive** (off by default): `GET /account/openorders?v2=true` every 4 minutes with the tab's own
+  cookies; pauses after 30 minutes with the tab hidden, stops at the first logout or bot check.
 
 ## Hedgehog Camp
 - The scoring API field `sharpe_ratio` is the consistency score S = (G − L)/(G + L), not a Sharpe ratio.

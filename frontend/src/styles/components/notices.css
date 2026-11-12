@@ -1,0 +1,70 @@
+/* ─── notices (banners above the chat input) + connection dot ─────────── */
+
+.notice-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px 10px 0;
+  max-height: 40%;
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+.notice {
+  border: 1px solid var(--voitta-border);
+  border-left-width: 3px;
+  border-radius: 6px;
+  padding: 7px 8px 7px 9px;
+  background: var(--voitta-surface);
+  color: var(--voitta-text);
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+.notice-warning { background: var(--voitta-warn-bg); border-color: var(--voitta-warn-border); }
+.notice-warning .notice-icon { color: var(--voitta-warn-fg); }
+.notice-error { background: var(--voitta-error-bg); border-color: var(--voitta-error-border); }
+.notice-error .notice-icon { color: var(--voitta-error-fg); }
+.notice-info .notice-icon { color: var(--voitta-text-muted); }
+.notice-main { display: flex; gap: 8px; align-items: flex-start; }
+.notice-icon { flex-shrink: 0; font-size: 14px; line-height: 1.2; }
+.notice-body { flex: 1; min-width: 0; }
+.notice-text { font-weight: 600; }
+.notice-detail { color: var(--voitta-text-muted); margin-top: 2px; }
+.notice-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.notice-btn {
+  font: inherit;
+  font-size: 12px;
+  padding: 3px 9px;
+  border-radius: 5px;
+  border: 1px solid var(--voitta-border);
+  background: var(--voitta-bg);
+  color: var(--voitta-text);
+  cursor: pointer;
+}
+.notice-btn.primary { background: var(--voitta-accent); border-color: var(--voitta-accent); color: var(--voitta-accent-fg); }
+.notice-btn:disabled { opacity: 0.5; cursor: default; }
+.notice-close {
+  flex-shrink: 0;
+  border: none;
+  background: none;
+  color: var(--voitta-text-muted);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 0 2px;
+}
+.notice-close:hover { color: var(--voitta-text); }
+
+/* connection dot in the header */
+header .conn-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin: 0 4px;
+  flex-shrink: 0;
+  background: var(--voitta-text-muted);
+}
+header .conn-dot.ok { background: var(--voitta-ok-fg); }
+header .conn-dot.reconnecting { background: var(--voitta-warn-border); animation: voitta-conn-blink 1s ease-in-out infinite; }
+header .conn-dot.lost { background: var(--voitta-error-fg); }
+@keyframes voitta-conn-blink { 50% { opacity: 0.35; } }
+@media (prefers-reduced-motion: reduce) { header .conn-dot.reconnecting { animation: none; } }

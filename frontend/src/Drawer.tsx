@@ -13,6 +13,7 @@ import { DOG_ICON_DATA_URI } from "./lib/dogIcon";
 import ChatPane from "./ChatPane";
 import SettingsView, { ACCOUNT_TAB, ROUTINES_TAB, USERS_TAB } from "./SettingsView";
 import AlarmClock from "./AlarmClock";
+import ConnectionDot from "./chat/ConnectionDot";
 import CallFnRouter from "./lib/CallFnRouter";
 import ReportPane from "./report/ReportPane";
 import ThreadPicker from "./ThreadPicker";
@@ -407,6 +408,7 @@ export default function Drawer({ backendOrigin }: Props) {
               }}
             />
           )}
+          <ConnectionDot />
           <span className="spacer" />
           {auth.email && (
             <UserMenu

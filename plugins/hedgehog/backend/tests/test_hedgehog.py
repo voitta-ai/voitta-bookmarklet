@@ -148,6 +148,7 @@ def env(monkeypatch):
     monkeypatch.setattr(_core, "st_call", bridge)  # open_positions() lives in _core
     monkeypatch.setattr(trading, "FILL_POLL_DELAYS_S", (0, 0, 0))
     trading._previews.clear()
+    _core._breaks.clear()
     return SimpleNamespace(state=state, asked=asked, bridge=bridge, ctx=SimpleNamespace(session_id="s1", extras={}))
 
 
@@ -536,3 +537,94 @@ async def test_raw_read_adds_caveat_without_touching_payload(monkeypatch):
     monkeypatch.setattr(tools, "st_call", fake)
     r = await tools._api_get({"path": "/account/dashboardhistoricalportfoliovalues"}, CTX)
     assert "CUMULATIVE" in r["caveat"] and r["body"] == body
+
+
+# ---- StockTrak session drops (11/12/2026) -------------------------------------
+
+def _browser(monkeypatch, behaviour):
+    """Patch the real _core.st_call's browser hop."""
+    from app.tools.browser import BrowserToolError
+
+    async def fake_call_browser(name, args, ctx, timeout_ms=15_000):
+        if isinstance(behaviour, BaseException):
+            raise behaviour
+        if behaviour == "hang":
+            import asyncio
+            await asyncio.sleep(3600)
+        if behaviour == "none":
+            return None
+        if isinstance(behaviour, tuple):
+            raise BrowserToolError(*behaviour)
+        return behaviour
+
+    monkeypatch.setattr(_core, "call_browser", fake_call_browser)
+    _core._breaks.clear()
+
+
+CTX2 = SimpleNamespace(session_id="sx", extras={})
+
+
+async def test_st_call_turns_a_vanished_tab_into_tab_unreachable(monkeypatch):
+    _browser(monkeypatch, "none")  # Chainlit's call_fn returns None after its own timeout
+    with pytest.raises(_core.StockTrakError) as e:
+        await _core.st_call(CTX2, "POST", "/trading/placeorderv2", {"a": 1}, write=True)
+    assert e.value.kind == "tab_unreachable" and "may or may not have reached StockTrak" in str(e.value)
+    assert _core.last_session_break(CTX2) is not None
+
+
+async def test_st_call_has_its_own_deadline(monkeypatch):
+    _browser(monkeypatch, "hang")
+    with pytest.raises(_core.StockTrakError) as e:
+        await _core.st_call(CTX2, "GET", "/account/openorders", timeout_ms=10)  # 10 ms + 5 s headroom
+    assert e.value.kind == "tab_unreachable"
+
+
+@pytest.mark.parametrize("kind,want", [("session_expired", "session_expired"), ("site_check", "site_check"),
+                                       ("bad_json", "unexpected_page"), ("server_error_page", "server_error_page")])
+async def test_st_call_error_kinds_and_breaks(monkeypatch, kind, want):
+    _browser(monkeypatch, (kind, "x"))
+    with pytest.raises(_core.StockTrakError) as e:
+        await _core.st_call(CTX2, "GET", "/account/openorders")
+    assert e.value.kind == want
+    # a bad request ("Oops" page) is not a session break
+    assert (_core.last_session_break(CTX2) is not None) == (want != "server_error_page")
+
+
+def test_session_hints_forbid_write_retries():
+    for kind in ("session_expired", "site_check", "unexpected_page", "tab_unreachable"):
+        hint = _core.fail(kind, "x")["hint"]
+        assert "Do NOT retry orders" in hint and "hedgehog_orders" in hint
+
+
+async def test_preview_from_before_a_session_drop_is_refused(env):
+    p = await trading._preview_order(dict(ORDER), env.ctx)
+    _core.note_session_break(env.ctx)
+    r = await trading._place_order({"preview_id": p["preview_id"]}, env.ctx)
+    assert r["error"] == "preview_stale" and "/trading/placeorderv2" not in env.bridge.paths()
+    # and it's gone, not just refused once
+    assert (await trading._place_order({"preview_id": p["preview_id"]}, env.ctx))["error"] == "preview_required"
+
+
+async def test_first_order_after_a_drop_asks_even_with_skip_on(env):
+    env.state["confirm"] = False  # "don't ask me" is on
+    _core.note_session_break(env.ctx)
+    import time as _t
+    _t.sleep(0.01)  # preview strictly after the break
+    p = await trading._preview_order(dict(ORDER), env.ctx)
+    r = await trading._place_order({"preview_id": p["preview_id"]}, env.ctx)
+    assert r["ok"] and len(env.asked) == 1  # asked despite the setting
+    assert _core.last_session_break(env.ctx) is None  # the yes clears it
+    p2 = await trading._preview_order(dict(ORDER), env.ctx)
+    await trading._place_order({"preview_id": p2["preview_id"]}, env.ctx)
+    assert len(env.asked) == 1  # back to not asking
+
+
+async def test_session_log_tool_reads_the_users_log(monkeypatch, tmp_path):
+    from app.services import plugin_events
+    from voitta_hedgehog import tools
+
+    monkeypatch.setattr("app.services.current_user.user_data_root", lambda: tmp_path)
+    plugin_events.append("hedgehog", [{"type": "first_ok"}, {"type": "logged_out", "via": "cross_tab", "min_idle": 3}])
+    r = await tools._session_log({}, CTX2)
+    assert r["ok"] and [e["type"] for e in r["events"]] == ["first_ok", "logged_out"]
+    assert r["logouts"][0]["via"] == "cross_tab"

@@ -27,6 +27,7 @@ import workspace from "./components/workspace.css?inline";
 import tokenModal from "./components/token-modal.css?inline";
 import questionCard from "./components/question-card.css?inline";
 import routines from "./components/routines.css?inline";
+import notices from "./components/notices.css?inline";
 
 export const cssText = [
   tokens,
@@ -48,4 +49,5 @@ export const cssText = [
   tokenModal,
   questionCard,
   routines,
+  notices,
 ].join("\n\n");

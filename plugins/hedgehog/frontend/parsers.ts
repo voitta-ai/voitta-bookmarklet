@@ -183,6 +183,59 @@ export function isErrorPage(html: string): boolean {
   return /<title>\s*Oops, something went wrong/i.test(html);
 }
 
+/** Imperva/Incapsula bot-protection page (challenge or block), served instead of StockTrak. */
+export function isSiteCheckPage(html: string): boolean {
+  return /_Incapsula_Resource|Incapsula incident ID|Request unsuccessful\. Incapsula/i.test(html);
+}
+
+/** A whole HTML document (vs. the fragments StockTrak's AJAX endpoints return). */
+export function isFullDocument(html: string): boolean {
+  return /^\s*(<!doctype html|<html[\s>])/i.test(html);
+}
+
+// StockTrak paths that legitimately answer with a whole page.
+const FULL_PAGE_PATHS = new Set(["/account/closedpositions"]);
+
+export type Verdict =
+  | { kind: "ok" }
+  | { kind: "site_check" }
+  | { kind: "session_expired"; via: "redirect" | "login_page" | "http_401" | "http_403" }
+  | { kind: "error_page" }
+  | { kind: "unexpected_page"; title: string };
+
+/**
+ * What a StockTrak response means, before parsing it. Order matters:
+ * the bot check can arrive as a 403 (so it's checked before 403 = logout),
+ * and StockTrak's "Oops" page is a bad request, never a logout.
+ */
+export function classifyResponse(r: {
+  status: number;
+  url: string;
+  ctype: string;
+  text: string;
+  path: string;
+}): Verdict {
+  if (isSiteCheckPage(r.text)) return { kind: "site_check" };
+  let finalPath = "";
+  try {
+    finalPath = new URL(r.url).pathname.toLowerCase();
+  } catch {
+    /* relative/invalid */
+  }
+  if (finalPath === "/login" || finalPath === "/logout") return { kind: "session_expired", via: "redirect" };
+  if (isLoginPage(r.url, r.text)) return { kind: "session_expired", via: "login_page" };
+  if (r.status === 401) return { kind: "session_expired", via: "http_401" };
+  if (r.status === 403) return { kind: "session_expired", via: "http_403" };
+  if (/csv|json/i.test(r.ctype)) return { kind: "ok" };
+  if (isErrorPage(r.text)) return { kind: "error_page" };
+  const key = r.path.toLowerCase().replace(/\/+$/, "");
+  if (isFullDocument(r.text) && !FULL_PAGE_PATHS.has(key)) {
+    const title = (r.text.match(/<title[^>]*>([^<]*)/i)?.[1] || "").trim().slice(0, 80);
+    return { kind: "unexpected_page", title };
+  }
+  return { kind: "ok" };
+}
+
 /** The login page (session expired / not signed in). */
 export function isLoginPage(finalUrl: string, html: string): boolean {
   try {

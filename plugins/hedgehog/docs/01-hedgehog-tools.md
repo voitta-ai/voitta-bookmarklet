@@ -11,8 +11,14 @@ hedgehogcamp.ai only `hedgehog_rewards` works; the others return `wrong_host`.
 |---|---|
 | `hedgehog_page_context` | `on_stocktrak, page_type, signed_in, username, account_id, tournament_id, market_open, market_message` |
 
-`signed_in: false` or any `session_expired` error → ask the user to sign in at app.stocktrak.com with
-"Remember me" ticked (sessions without it expire overnight), then retry once.
+`signed_in: false` → ask the user to sign in at app.stocktrak.com with "Remember me" ticked (sessions
+without it expire overnight).
+
+A session that drops mid-task (`session_expired`, `site_check`, `unexpected_page`, `tab_unreachable`)
+shows a banner in the chat with "Log in in a new tab" and "I'm back, resume". Stop and wait for the user;
+never retry a write. Previews made before the drop are discarded (`preview_stale`), and the next order asks
+for confirmation even if "Don't ask me before each order" is on. `hedgehog_session_log` has the history
+of logouts with how each was detected (see docs/05 → Session).
 
 ## Read tools (always available)
 
@@ -28,6 +34,7 @@ hedgehogcamp.ai only `hedgehog_rewards` works; the others return `wrong_host`.
 | `hedgehog_option_chain` | symbol → expirations; + expiration → strikes; + strike → contract quote incl. `OptionSymbol` | `symbol, expiration, option_type, strike` |
 | `hedgehog_spread_template` | Leg template for strategy 1–22 | `spread_type, symbol, quantity` |
 | `hedgehog_my_rank` | Own StockTrak rank (`rank / players`) + top-10 return % (no names) | – |
+| `hedgehog_session_log` | StockTrak session diagnostics: page loads, keep-alive, every logout with how it was spotted and minutes since login / activity / keep-alive | `limit` |
 | `hedgehog_rewards` | Hedgehog Camp H-Tokens: `my_standing`, `my_week` (own R, S, H₀, dH), `weeks`, `config`. Returns `units`; before any credited week (`weeks_participated` 0) S is `null` (`scored: false`, provisional value in `sharpe_ratio_uncredited`) | `section, username, week_id` |
 | `hedgehog_watchlist` | list / add / remove (doesn't affect the score) | `action, symbols, security_id` |
 | `hedgehog_api_read` | Escape hatch for any allowlisted READ endpoint (docs/03) with raw params. The payload is untouched; known traps come back in `caveat` (e.g. the cumulative Trades column of `dashboardhistoricalportfoliovalues`) | `path, method, params` |
@@ -69,7 +76,11 @@ hedgehogcamp.ai only `hedgehog_rewards` works; the others return `wrong_host`.
 
 | `error` | Meaning / what to do |
 |---|---|
-| `session_expired` | Signed out. Ask the user to sign in (Remember me), retry once. |
+| `session_expired` | Signed out (redirect to login, login page, 401/403). The banner asks the user to log in again in a new tab. Stop; don't retry writes. |
+| `site_check` | StockTrak's bot protection (Incapsula) answered. The user opens StockTrak in a new tab to pass it. Stop; don't retry writes. |
+| `unexpected_page` | A web page came back instead of data (or "JSON" that wasn't). Try one read; if it fails, stop. |
+| `tab_unreachable` | The StockTrak tab didn't answer in time: navigated away (another tab logged out), closed, or no bookmarklet. A write may or may not have gone through: check `hedgehog_orders` before anything else. |
+| `preview_stale` | The session dropped after this preview. Check orders, preview again, confirm. |
 | `wrong_host` | Bookmarklet isn't on app.stocktrak.com. |
 | `server_error_page` | StockTrak's "Oops" page: missing/invalid param, or nothing to show. Check docs/03. |
 | `rule_violation` | A game rule would be broken (fractional qty, no note, disallowed type…). Fix the order. |

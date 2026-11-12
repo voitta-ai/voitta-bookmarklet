@@ -2,7 +2,10 @@
   "name": "hedgehog",
   "version": "0.1.0",
   "description": "Hedgehog Camp trading game (MIT 2026, powered by StockTrak): account, positions, orders, history and CSV exports, quotes and option chains, rankings, H-Token rewards; optional trading (stocks, ETFs, options, 22 option strategies) behind a settings switch, game-rule guardrails and per-order confirmation. Calls run from the user's own StockTrak tab; no credentials leave the browser.",
-  "host_patterns": ["stocktrak.com", "hedgehogcamp.ai"],
+  "host_patterns": [
+    "stocktrak.com",
+    "hedgehogcamp.ai"
+  ],
   "python_module": "voitta_hedgehog",
   "frontend_bundle": "frontend/widget.ts",
   "docs_dir": "docs",
@@ -21,6 +24,12 @@
         "label": "Don't ask me before each order (not recommended)",
         "type": "bool",
         "help": "Off by default: the plugin itself asks in the chat before every order and exercise, and only proceeds when you click 'Place it'."
+      },
+      {
+        "key": "plugins.hedgehog.keepalive",
+        "label": "Keep the StockTrak session alive (read-only ping every 4 min)",
+        "type": "bool",
+        "help": "Off by default. While a StockTrak tab with the bookmarklet is open, it asks StockTrak for today's trade notes every 4 minutes using that tab's own login, so an idle session doesn't time out. Never signs in; pauses after 30 minutes with the tab hidden."
       }
     ]
   }

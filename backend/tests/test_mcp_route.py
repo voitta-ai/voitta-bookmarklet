@@ -62,7 +62,11 @@ async def _drive(scope, app=None):
 
 @pytest.mark.asyncio
 async def test_gate_blocks_when_setting_disabled(monkeypatch):
+    # All three switches open the gate; pin every one, or this reads the
+    # developer's real settings.json (where MCP tools/chat may well be on).
     monkeypatch.setattr(user_settings, "mcp_debug_enabled", lambda: False)
+    monkeypatch.setattr(user_settings, "mcp_tools_enabled", lambda: False)
+    monkeypatch.setattr(user_settings, "mcp_chat_enabled", lambda: False)
     status, inner = await _drive(_scope())
     assert status == 403
     assert inner.called is False
