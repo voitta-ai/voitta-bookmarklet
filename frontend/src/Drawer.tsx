@@ -14,6 +14,7 @@ import ChatPane from "./ChatPane";
 import SettingsView, { ACCOUNT_TAB, ROUTINES_TAB, USERS_TAB } from "./SettingsView";
 import AlarmClock from "./AlarmClock";
 import ConnectionDot from "./chat/ConnectionDot";
+import NoticeStack from "./chat/NoticeStack";
 import CallFnRouter from "./lib/CallFnRouter";
 import ReportPane from "./report/ReportPane";
 import ThreadPicker from "./ThreadPicker";
@@ -501,6 +502,10 @@ export default function Drawer({ backendOrigin }: Props) {
             ×
           </button>
         </header>
+
+        {/* Banners (plugins, e.g. "StockTrak session expired") show over every
+            view, not just the chat — a logout must be seen from Settings too. */}
+        <NoticeStack />
 
         {/* Key forces a clean remount on thread switches or new-conversation. */}
         <div className="chat-wrap" style={view !== "chat" ? { display: "none" } : undefined}>

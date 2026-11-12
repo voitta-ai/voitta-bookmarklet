@@ -23,7 +23,6 @@ import { encodeFiles } from "./lib/attachments";
 import { useAuthConnect } from "./lib/useAuthConnect";
 import { useRoutineScheduler } from "./lib/useRoutineScheduler";
 import { setChatHandle } from "./lib/notices";
-import NoticeStack from "./chat/NoticeStack";
 
 // One row of /api/agent_sdk/sessions/{id}/messages (see
 // backend/app/services/agent_sdk/sessions.py:_transcript_rows).
@@ -294,7 +293,6 @@ export default function ChatPane({
         }
       />
       <TokenPromptModal />
-      <NoticeStack />
       {askQuestions && askUser && (
         <QuestionCard
           key={askUser.spec.step_id}

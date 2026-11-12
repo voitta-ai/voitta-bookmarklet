@@ -176,7 +176,13 @@ async function resume(kind: BreakKind): Promise<void> {
 
 // ── keep-alive ───────────────────────────────────────────────────────────
 
+function onLoginPage(): boolean {
+  return /^\/(login|logout)\b/i.test(location.pathname);
+}
+
 function keepaliveWanted(): boolean {
+  // Never on the login page: there's no session to keep, and pings would only log more "logged out".
+  if (onLoginPage()) return false;
   return Boolean((getSettings().plugins?.[PLUGIN] as Record<string, unknown> | undefined)?.keepalive);
 }
 
@@ -315,7 +321,7 @@ export function startSession(): void {
   if (st.started || !onStockTrak()) return;
   st.started = true;
   st.loadedAt = Date.now();
-  const onLogin = /^\/(login|logout)\b/i.test(location.pathname);
+  const onLogin = onLoginPage();
   logEvent({ type: "page_load", login_page: onLogin });
 
   for (const ev of ["pointerdown", "keydown", "wheel"]) document.addEventListener(ev, onActivity, { capture: true, passive: true });
