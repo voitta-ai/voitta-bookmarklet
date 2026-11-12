@@ -346,6 +346,21 @@ def test_chat_check_ignores_a_stale_sid_in_persisted_metadata(server, monkeypatc
         chainlit_app._apply_current_user()
 
 
+def test_inline_allow_is_framable_but_clickjack_guarded(desktop):
+    r = desktop.get("/auth/approve-embed")
+    assert r.status_code == 200
+    assert "x-frame-options" not in r.headers  # it must load inside the widget on any site
+    assert "frame-ancestors *" in r.headers["content-security-policy"]
+    page = r.text
+    # its safety comes from these: visibility tracking, a 1 s arm delay, a minimum size,
+    # the site taken from the browser (ancestorOrigins), and no opacity on observed elements
+    for must in ("trackVisibility: true", "ARM_MS = 1000", "MIN_W", "location.ancestorOrigins", "ev.isTrusted"):
+        assert must in page, must
+    assert "button:disabled{opacity" not in page.replace(" ", "")
+    # the popup version stays unframable
+    assert desktop.get("/auth/approve").headers["x-frame-options"] == "DENY"
+
+
 def test_bridge_window_cannot_be_framed_and_asks_before_boot(desktop):
     r = desktop.get("/bridge")
     assert r.status_code == 200

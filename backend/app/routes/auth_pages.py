@@ -149,6 +149,106 @@ f.addEventListener('submit', async function(e){{
     return _page("Sign in", body, script)
 
 
+_EMBED_HEADERS = {
+    "Cache-Control": "no-store",
+    "Referrer-Policy": "no-referrer",
+    # Framable by any site ON PURPOSE: it's the inline "Allow" inside the widget. Its protection
+    # against a page hiding/covering it is IntersectionObserver v2 (below), not framing headers.
+    "Content-Security-Policy": (
+        "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; "
+        "form-action 'none'; base-uri 'none'; frame-ancestors *"
+    ),
+}
+
+_EMBED_HTML = """<!doctype html><html lang=en><meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1"><title>Allow Voitta</title>
+<style>
+html,body{margin:0;background:#141922;color:#e5e7eb;font:13px/1.45 system-ui,-apple-system,sans-serif}
+#box{padding:12px 14px;text-align:center}
+.q{font-weight:600;font-size:14px}
+.site{font-family:ui-monospace,Menlo,monospace;word-break:break-all}
+.m{opacity:.7;font-size:12px;margin-top:3px}
+button{font:inherit;font-weight:600;margin-top:10px;padding:7px 22px;border-radius:7px;cursor:pointer;
+  border:1px solid #3b82f6;background:#3b82f6;color:#fff}
+/* No opacity on anything observed: IntersectionObserver v2 treats opacity < 1 as "not visible",
+   so a faded disabled button could never arm itself. Grey it out with colour instead. */
+button:disabled{background:#475569;border-color:#475569;color:#cbd5e1;cursor:default}
+.err{color:#f97066;font-size:12px;margin-top:6px;min-height:1em}
+</style>
+<div id=box>
+  <div class=q id=q>Checking…</div>
+  <div class=m id=m></div>
+  <button id=yes type=button disabled hidden>Allow</button>
+  <div class=err id=err role=alert></div>
+</div>
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  // The site to allow = the page this frame sits in, as the browser reports it (not page input).
+  var SITE = (location.ancestorOrigins && location.ancestorOrigins.length) ? location.ancestorOrigins[0] : null;
+  var IO2 = typeof IntersectionObserverEntry !== "undefined" && "isVisible" in IntersectionObserverEntry.prototype;
+  var ARM_MS = 1000, MIN_W = 200, MIN_H = 100, armT = null;
+  function post(t) { try { parent.postMessage({ t: t }, SITE || "*"); } catch (e) {} }
+  function fail(m) { $("err").textContent = m; }
+
+  if (window.top === window || !SITE) { $("q").textContent = "Open this from the Voitta widget."; return; }
+  if (!IO2) { post("voitta-embed-unsupported"); $("q").textContent = "Use the Voitta window to allow this site."; return; }
+  post("voitta-embed-ready");
+
+  var host = SITE.replace(/^https?:\\/\\//, "");
+  function disarm() { clearTimeout(armT); armT = null; $("yes").disabled = true; }
+  function onVisibility(visible) {
+    // Anti-clickjacking: Allow is clickable only while this frame is fully on screen, not covered,
+    // not transparent / transformed / filtered (IntersectionObserver v2 checks all that), big enough
+    // to read, and has been like that for a second (so it can't be slid under the cursor).
+    var bigEnough = window.innerWidth >= MIN_W && window.innerHeight >= MIN_H;
+    if (!visible || !bigEnough) { disarm(); return; }
+    if (armT === null && $("yes").disabled) armT = setTimeout(function () { armT = null; $("yes").disabled = false; }, ARM_MS);
+  }
+
+  fetch("/api/auth/sites/status?origin=" + encodeURIComponent(SITE), { credentials: "include" })
+    .then(function (r) { return r.json(); })
+    .then(function (s) {
+      if (!s.signed_in) { post("voitta-embed-signin"); $("q").textContent = "Sign in to Voitta first."; return; }
+      if (s.approved) { post("voitta-site-approved"); $("q").textContent = "Connected."; return; }
+      $("q").innerHTML = 'Allow Voitta on <span class=site></span>?';
+      $("q").querySelector(".site").textContent = host;
+      $("m").textContent = (s.email ? s.email + " · " : "") + "Voitta will be able to act for you on this site.";
+      $("yes").hidden = false;
+      // The question (what you're allowing) and the button must both be fully on screen.
+      var seen = { q: false, yes: false };
+      var io = new IntersectionObserver(function (entries) {
+        entries.forEach(function (e) { seen[e.target.id] = e.isVisible && e.intersectionRatio >= 0.99; });
+        onVisibility(seen.q && seen.yes);
+      }, { trackVisibility: true, delay: 100, threshold: [0, 0.99, 1] });
+      io.observe($("q"));
+      io.observe($("yes"));
+      window.addEventListener("resize", function () { disarm(); });
+    })
+    .catch(function () { fail("Could not reach Voitta."); });
+
+  $("yes").onclick = function (ev) {
+    if ($("yes").disabled || !ev.isTrusted) return;
+    disarm();
+    fetch("/api/auth/sites/approve", {
+      method: "POST", credentials: "include", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ origin: SITE })
+    }).then(function (r) {
+      if (!r.ok) throw new Error("status " + r.status);
+      $("yes").hidden = true; $("m").textContent = ""; $("q").textContent = "Connected.";
+      post("voitta-site-approved");
+    }).catch(function (e) { fail("Could not connect the site (" + e.message + ")."); });
+  };
+})();
+</script></html>"""
+
+
+@router.get("/auth/approve-embed", include_in_schema=False)
+async def approve_embed_page() -> HTMLResponse:
+    """The inline "Allow Voitta on <site>?" shown inside the widget on normal sites (no popup)."""
+    return HTMLResponse(_EMBED_HTML, headers=_EMBED_HEADERS)
+
+
 @router.get("/auth/approve", include_in_schema=False)
 async def approve_page() -> HTMLResponse:
     body = """

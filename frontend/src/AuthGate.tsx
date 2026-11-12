@@ -62,20 +62,10 @@ export default function AuthGate({ backendOrigin, children }: Props) {
     [refresh],
   );
 
-  // Unapproved site: open the Allow window ourselves, once per page load, so
-  // the user's only click is Allow. Works because the bookmarklet click just
-  // happened (browsers allow a popup shortly after a click); if it's blocked,
-  // the panel's button opens it instead.
-  const [autoAsked, setAutoAsked] = useState(false);
-  const askedOnce = useRef(false);
-  const needsApproval = !!state && !(state.enabled && !state.authenticated) && !state.site.refused && !state.site.approved;
-  useEffect(() => {
-    if (!needsApproval || askedOnce.current) return;
-    askedOnce.current = true;
-    if (!navigator.userActivation?.isActive) return; // no recent click: a popup would be blocked
-    setAutoAsked(true);
-    void run(() => openApprove(backendOrigin));
-  }, [needsApproval, run, backendOrigin]);
+  // Unapproved site: ask inline (a Voitta frame inside the panel), no popup.
+  // Falls back to the Voitta window when the browser can't verify the frame
+  // is visible, or the site blocks frames.
+  const [inlineFailed, setInlineFailed] = useState(false);
 
   const onLogout = useCallback(async () => {
     await logout(backendOrigin);
@@ -113,15 +103,20 @@ export default function AuthGate({ backendOrigin, children }: Props) {
 
   if (!state.site.approved) {
     const host = (state.site.origin || location.origin).replace(/^https?:\/\//, "");
+    if (inlineApprovalSupported() && !inlineFailed) {
+      return (
+        <Panel>
+          <InlineApprove backendOrigin={backendOrigin} onApproved={refresh} onFallback={() => setInlineFailed(true)} />
+        </Panel>
+      );
+    }
     return (
       <Panel>
         <div style={{ opacity: 0.8, marginBottom: 22 }}>
-          {autoAsked
-            ? <>Allow Voitta on <b style={{ wordBreak: "break-all" }}>{host}</b> in the Voitta window.</>
-            : <>Voitta isn't connected to <b style={{ wordBreak: "break-all" }}>{host}</b> yet.</>}
+          Voitta isn't connected to <b style={{ wordBreak: "break-all" }}>{host}</b> yet.
         </div>
         <PanelButton busy={busy} primary onClick={() => run(() => openApprove(backendOrigin))}>
-          {autoAsked ? "Open the Voitta window again" : "Connect this site"}
+          Connect this site
         </PanelButton>
       </Panel>
     );
@@ -141,6 +136,61 @@ export default function AuthGate({ backendOrigin, children }: Props) {
     >
       {children}
     </AuthContext.Provider>
+  );
+}
+
+// Inline approval needs IntersectionObserver v2 (Chrome/Edge): the Voitta
+// frame uses it to refuse clicks while the page hides or covers it.
+export function inlineApprovalSupported(): boolean {
+  return typeof IntersectionObserverEntry !== "undefined" && "isVisible" in IntersectionObserverEntry.prototype;
+}
+
+const INLINE_READY_MS = 6000;
+
+// The "Allow Voitta on <site>?" frame, served by the backend
+// (/auth/approve-embed). The page can't read or click into it; it tells us
+// when the site was approved, or that we should fall back to the window.
+function InlineApprove({
+  backendOrigin,
+  onApproved,
+  onFallback,
+}: {
+  backendOrigin: string;
+  onApproved: () => void;
+  onFallback: () => void;
+}) {
+  const frame = useRef<HTMLIFrameElement | null>(null);
+  // Latest callbacks without re-running the effect (that would restart the
+  // ready timer after the frame already said hello).
+  const cb = useRef({ onApproved, onFallback });
+  cb.current = { onApproved, onFallback };
+  useEffect(() => {
+    const origin = new URL(backendOrigin).origin;
+    let ready = false;
+    const onMsg = (e: MessageEvent) => {
+      if (e.origin !== origin || !frame.current || e.source !== frame.current.contentWindow) return;
+      const t = (e.data as { t?: string } | null)?.t;
+      if (t === "voitta-embed-ready") ready = true;
+      else if (t === "voitta-site-approved") cb.current.onApproved();
+      else if (t === "voitta-embed-unsupported" || t === "voitta-embed-signin") cb.current.onFallback();
+    };
+    window.addEventListener("message", onMsg);
+    // Frame blocked (the site's CSP, local-network rules…): use the window.
+    const timer = window.setTimeout(() => {
+      if (!ready) cb.current.onFallback();
+    }, INLINE_READY_MS);
+    return () => {
+      window.removeEventListener("message", onMsg);
+      clearTimeout(timer);
+    };
+  }, [backendOrigin]);
+  return (
+    <iframe
+      ref={frame}
+      src={`${backendOrigin}/auth/approve-embed`}
+      title="Allow Voitta on this site"
+      style={{ width: 300, maxWidth: "100%", height: 190, border: "1px solid var(--voitta-border)", borderRadius: 8 }}
+    />
   );
 }
 
