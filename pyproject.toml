@@ -10,7 +10,7 @@
 [tool.briefcase]
 project_name = "Voitta"
 bundle = "ai.voitta"
-version = "0.2.14"
+version = "0.2.15"
 url = "https://voitta.ai"
 license = "AGPL-3.0-or-later"
 license-files = ["LICENSE"]
