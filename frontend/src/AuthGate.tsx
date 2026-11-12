@@ -6,7 +6,7 @@
 // Re-probes on focus and every minute, so a disabled account or a removed
 // site closes the widget without a reload.
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   AuthContext,
   checkAuth,
@@ -62,6 +62,21 @@ export default function AuthGate({ backendOrigin, children }: Props) {
     [refresh],
   );
 
+  // Unapproved site: open the Allow window ourselves, once per page load, so
+  // the user's only click is Allow. Works because the bookmarklet click just
+  // happened (browsers allow a popup shortly after a click); if it's blocked,
+  // the panel's button opens it instead.
+  const [autoAsked, setAutoAsked] = useState(false);
+  const askedOnce = useRef(false);
+  const needsApproval = !!state && !(state.enabled && !state.authenticated) && !state.site.refused && !state.site.approved;
+  useEffect(() => {
+    if (!needsApproval || askedOnce.current) return;
+    askedOnce.current = true;
+    if (!navigator.userActivation?.isActive) return; // no recent click: a popup would be blocked
+    setAutoAsked(true);
+    void run(() => openApprove(backendOrigin));
+  }, [needsApproval, run, backendOrigin]);
+
   const onLogout = useCallback(async () => {
     await logout(backendOrigin);
     await refresh();
@@ -101,10 +116,12 @@ export default function AuthGate({ backendOrigin, children }: Props) {
     return (
       <Panel>
         <div style={{ opacity: 0.8, marginBottom: 22 }}>
-          Voitta isn't connected to <b style={{ wordBreak: "break-all" }}>{host}</b> yet.
+          {autoAsked
+            ? <>Allow Voitta on <b style={{ wordBreak: "break-all" }}>{host}</b> in the Voitta window.</>
+            : <>Voitta isn't connected to <b style={{ wordBreak: "break-all" }}>{host}</b> yet.</>}
         </div>
         <PanelButton busy={busy} primary onClick={() => run(() => openApprove(backendOrigin))}>
-          Connect this site
+          {autoAsked ? "Open the Voitta window again" : "Connect this site"}
         </PanelButton>
       </Panel>
     );

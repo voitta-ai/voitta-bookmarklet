@@ -344,3 +344,14 @@ def test_chat_check_ignores_a_stale_sid_in_persisted_metadata(server, monkeypatc
     _chat_ctx(monkeypatch, None, persisted_meta={"sid": new})  # no token → no session
     with pytest.raises(chainlit_app.SessionEnded):
         chainlit_app._apply_current_user()
+
+
+def test_bridge_window_cannot_be_framed_and_asks_before_boot(desktop):
+    r = desktop.get("/bridge")
+    assert r.status_code == 200
+    assert r.headers["x-frame-options"] == "DENY"
+    assert "frame-ancestors 'none'" in r.headers["content-security-policy"]
+    relay = desktop.get("/bridge/relay.js").text
+    # the approval check runs before the assistant is sent to the page
+    assert "approveThenBoot" in relay and "/api/auth/sites/status" in relay
+    assert relay.index("approveThenBoot()") < relay.index("function sendBoot")

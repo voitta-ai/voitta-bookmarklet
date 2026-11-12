@@ -77,14 +77,24 @@ _BRIDGE_HTML = """<!doctype html>
   h1{font-size:15px;margin:0 0 6px;color:#e2e8f0}
   p{margin:4px 0;opacity:.75}
   code{color:#93c5fd}
+  .site{font-family:ui-monospace,Menlo,monospace;color:#e2e8f0;word-break:break-all}
+  #ask{margin-top:14px}
+  #ask button{font:inherit;font-weight:600;padding:8px 18px;border-radius:7px;margin:0 4px;cursor:pointer;
+    border:1px solid #334155;background:#1e293b;color:#e2e8f0}
+  #ask button.primary{background:#3b82f6;border-color:#3b82f6;color:#fff}
+  #ask button:disabled{opacity:.5;cursor:default}
 </style>
 </head>
 <body>
   <div class="wrap">
     <div class="dot" id="dot"></div>
-    <h1>Voitta bridge</h1>
+    <h1 id="title">Voitta bridge</h1>
     <p id="status">Connecting to the page…</p>
-    <p style="margin-top:14px;font-size:11px;opacity:.5">
+    <div id="ask" hidden>
+      <button id="no" type="button">Not now</button>
+      <button id="yes" class="primary" type="button" disabled>Allow</button>
+    </div>
+    <p id="keep" style="margin-top:14px;font-size:11px;opacity:.5">
       Keep this window open while you use Voitta.<br>Closing it disconnects the assistant.
     </p>
   </div>
@@ -135,9 +145,9 @@ _RELAY_JS = r"""(function () {
     if (!d || d.v !== V) return;
 
     if (d.t === "hello") {
-      openerOrigin = e.origin;       // pin to the page that opened us
-      setStatus("Connected — loading assistant…", true);
-      sendBoot();
+      if (openerOrigin) return;      // already pinned
+      openerOrigin = e.origin;       // pin to the page that opened us (browser-verified)
+      approveThenBoot();
       return;
     }
     // Nothing is relayed before the handshake, and after it only messages
@@ -223,11 +233,66 @@ _RELAY_JS = r"""(function () {
   }
 
   function sendBoot() {
+    setStatus("Connected — loading assistant…", true);
     fetch("/bridge/boot.js").then(function (r) { return r.text(); }).then(function (code) {
       toOpener({ v: V, t: "boot", code: code });
     }).catch(function (err) {
       setStatus("Failed to load assistant: " + err);
     });
+  }
+
+  // Site approval happens HERE, in this window on Voitta's own origin, so the
+  // page can't click it: one click on Allow, then the assistant loads already
+  // connected (no second "Connect this site" step in the widget). The site is
+  // the browser-verified openerOrigin from the handshake, never page input.
+  // Allow only arms after this window has had focus for a moment.
+  var ARM_MS = 1000, armT = null;
+  function $(id) { return document.getElementById(id); }
+  function arm() {
+    clearTimeout(armT);
+    var yes = $("yes");
+    if (!yes) return;
+    yes.disabled = true;
+    if (document.visibilityState === "visible" && document.hasFocus())
+      armT = setTimeout(function () { yes.disabled = false; }, ARM_MS);
+  }
+  function approveThenBoot() {
+    var host = openerOrigin.replace(/^https?:\/\//, "");
+    fetch("/api/auth/sites/status?origin=" + encodeURIComponent(openerOrigin), { credentials: "include" })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (s) {
+        // Already approved, or the check isn't available: boot as before
+        // (the widget's own gate still applies).
+        if (!s || s.approved || !s.signed_in) { sendBoot(); return; }
+        $("title").innerHTML = 'Allow Voitta on <span class="site"></span>?';
+        $("title").querySelector(".site").textContent = host;
+        setStatus(s.email ? "Signed in as " + s.email : "Voitta will be able to act for you on this site.");
+        $("ask").hidden = false;
+        $("keep").hidden = true;
+        window.addEventListener("focus", arm);
+        window.addEventListener("blur", arm);
+        document.addEventListener("visibilitychange", arm);
+        arm();
+        $("no").onclick = function () { window.close(); };
+        $("yes").onclick = function () {
+          $("yes").disabled = true;
+          fetch("/api/auth/sites/approve", {
+            method: "POST", credentials: "include",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ origin: openerOrigin }),
+          }).then(function (r) {
+            if (!r.ok) throw new Error("status " + r.status);
+            $("ask").hidden = true;
+            $("keep").hidden = false;
+            $("title").textContent = "Voitta bridge";
+            sendBoot();
+          }).catch(function (err) {
+            setStatus("Could not connect the site (" + err.message + "). Close this window and try again.");
+            arm();
+          });
+        };
+      })
+      .catch(function () { sendBoot(); });
   }
 
   // Re-announce on a short timer until the opener completes the handshake,
@@ -442,7 +507,13 @@ _BOOT_JS = r"""(function () {
 
 @router.get("/bridge", include_in_schema=False)
 async def bridge_page() -> HTMLResponse:
-    return HTMLResponse(content=_BRIDGE_HTML, headers={"Cache-Control": "no-store"})
+    # Never framable: this window carries the "Allow Voitta on <site>?" click,
+    # so a page must not be able to overlay or click-jack it.
+    return HTMLResponse(content=_BRIDGE_HTML, headers={
+        "Cache-Control": "no-store",
+        "X-Frame-Options": "DENY",
+        "Content-Security-Policy": "frame-ancestors 'none'",
+    })
 
 
 @router.get("/bridge/relay.js", include_in_schema=False)
