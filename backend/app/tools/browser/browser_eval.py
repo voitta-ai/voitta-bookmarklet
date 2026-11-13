@@ -39,7 +39,12 @@ async def _handler(args: dict[str, Any], ctx: ToolCtx) -> dict[str, Any]:
             "eval_js", {"js": js, "await_ms": await_ms}, ctx, timeout_ms=await_ms + 5_000,
         )
     except BrowserToolError as exc:
-        return {"ok": False, "error": exc.kind, "message": str(exc)}
+        # call_browser keeps a thrown script's envelope {ok, error, message, stack, logs, ms}
+        # in details and puts only its bare code in str(exc); pass the envelope on whole.
+        retval = {"ok": False, "error": exc.kind, "message": str(exc)}
+        if isinstance(exc.details, dict):
+            retval = exc.details
+        return retval
     return result
 
 
