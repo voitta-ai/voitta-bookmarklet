@@ -30,6 +30,36 @@ claims against the code.
   neither (`.github/workflows/release.yml` only checks the version bump, tags,
   and builds the image), so run them yourself.
 
+## Testing a browser tool end to end
+
+A tool with `side="hybrid"` runs in the page, so backend tests do not prove it.
+This path needs no model and touches no user data:
+
+1. Build the widget: `cd frontend && npm ci && npm run build`.
+2. Give a second backend its own home. Put `{"mcpToolsEnabled": true}` in
+   `<scratch>/home/.config/voitta-bookmarklet/settings.json`. Then, from
+   `backend/`, with `HOME=<scratch>/home VOITTA_DATA_ROOT=<scratch>/data` set
+   for both commands:
+   - approve the test page's origin:
+     `.venv/bin/python -c "from app.services import users; users.approve_site(users.LOCAL_OWNER, 'http://127.0.0.1:12378')"`
+   - start it on a spare port:
+     `.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 12368`
+3. Open the test page in a browser and append
+   `<script src="http://127.0.0.1:12368/widget.js">` to it, as the bookmarklet
+   does. The page must be plain `http://127.0.0.1`, because this backend serves
+   plain HTTP.
+4. Call the tool over MCP at `http://127.0.0.1:12368/mcp/`: `vb_sessions`, then
+   `vb_call_tool` (`fastmcp.Client` works). The call goes through
+   `registry.dispatch` and the real socket.
+
+In a worktree, which has no venv, run the main checkout's
+`backend/.venv/bin/python` with `PYTHONPATH=<worktree>/backend`.
+
+To test against a Content-Security-Policy, serve the test page with that
+header. A probe run through the Chrome extension's JavaScript tool is exempt
+from the page's eval ban until its first `await` (seen 2026-11-13), so check
+the policy with an `eval` placed after an `await`.
+
 ## Layout
 
 - `backend/app/`: FastAPI app (`main.py`), agent loop (`agent.py`), tools

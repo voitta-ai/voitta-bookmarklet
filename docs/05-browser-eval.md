@@ -53,6 +53,22 @@ Console output (`console.log/warn/error`) is always captured into `logs[]`.
 - Only works when the bookmarklet is active on the target tab. If the user has navigated away or the widget was injected on a different tab, the call will fail with `no_session` or `not_available`.
 - Runs in the page origin — cross-origin iframes are not accessible.
 - HttpOnly cookies are not readable (browser security).
+- Pages whose Content-Security-Policy forbids eval (no `'unsafe-eval'` in `script-src`): every script fails with `eval_threw` and an `EvalError` message, even `return 1+1`. No script can run there. Use `read_page` instead.
+
+## When the page forbids eval: `read_page`
+
+`read_page(selector?, format?)` reads the page with DOM APIs only. A CSS selector is data, not code, so the page's CSP does not apply to it.
+
+- `selector` — CSS selector. Omitted: the page's `<body>`.
+- `format` — `text` (rendered text, the default) or `html` (`outerHTML`).
+
+```json
+{"ok": true, "url": "...", "title": "...", "format": "text", "selector": "main", "matches": 1, "truncated": false, "items": ["..."]}
+```
+
+`matches` is how many elements matched. `items` holds their text or HTML in document order. Long content is cut off and `truncated` is true; pass a narrower selector to read the rest. An invalid selector fails with the browser's `SyntaxError` message.
+
+`read_page` is read-only. It does not read inside iframes or shadow roots.
 
 ## Use cases
 

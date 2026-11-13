@@ -259,6 +259,10 @@ sequenceDiagram
 - Under the bridge, the Chainlit client is forced WebSocket-only (XHR polling
   isn't shimmed) and chat images are fetched into `blob:` URLs to dodge
   `img-src` CSP ([frontend/src/chat/BridgeImg.tsx](frontend/src/chat/BridgeImg.tsx)).
+- The bridge evals its boot code and the widget in the page, so it needs
+  `'unsafe-eval'`. A page whose CSP forbids eval but allows the script and the
+  connection takes the normal bookmarklet. `browser_eval` cannot run there;
+  `read_page` reads the DOM instead (§5).
 - The widget mounts in a **closed shadow DOM** under a fixed host element
   (`#voitta-bookmarklet-host`, z-index 2147483647); all CSS is inlined into one
   `<style>` node, themes switch via `data-theme`, layout (`chat-left`/
@@ -442,12 +446,12 @@ flowchart LR
   returns a uniform `ToolResult{ok, result, error{kind, message, details},
   latency_ms}` — exceptions never escape to the agent loop.
 
-### Core tools (22)
+### Core tools (23)
 
 | Group | Tools | Side |
 |-------|-------|------|
 | Diagnostics | `now` | server |
-| Page context | `get_page_title`, `get_active_theme` | hybrid / server |
+| Page context | `get_page_title`, `read_page` (DOM text or HTML without eval), `get_active_theme` | hybrid / server |
 | Escape hatch | `browser_eval` (arbitrary JS in the tab; default 30 s, max 120 s) | hybrid |
 | Scripts | `list_scripts`, `get_script`, `define_script`, `edit_script`, `delete_script`, `run_script`, `verify_script`, `get_script_errors`, `get_active_report`, `screenshot_report` | server (+1 hybrid) |
 | Data / workspace | `list_data`, `preview_data`, `create_folder`, `delete_folder`, `move_to_folder` | server |
@@ -487,7 +491,7 @@ sequenceDiagram
 
 - Core primitives live in
   [frontend/src/lib/primitives.ts](frontend/src/lib/primitives.ts):
-  `eval_js`, `get_page_title`, `screenshot_report`, `get_page_dump`,
+  `eval_js`, `get_page_title`, `read_page`, `screenshot_report`, `get_page_dump`,
   devtools capture helpers. `show_html_report` / `close_report` are handled
   directly in [frontend/src/chat/CallFnRouter.tsx](frontend/src/chat/CallFnRouter.tsx)
   (they mutate report-pane state).
