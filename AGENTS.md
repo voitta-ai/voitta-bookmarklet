@@ -25,10 +25,10 @@ claims against the code.
   without Docker. `./launchd.sh install` runs `./start.sh` as a per-user
   LaunchAgent (starts at login, restarts on exit); run `./launchd.sh uninstall`
   before moving or deleting the checkout.
-- Tests: `cd backend && ./.venv/bin/python -m pytest` and
-  `cd frontend && npm test`. CI runs neither (`.github/workflows/release.yml`
-  only checks the version bump, tags, and builds the image), so run them
-  yourself.
+- Tests: `cd backend && ./.venv/bin/pip install -e '.[dev]' && ./.venv/bin/python -m pytest`
+  (`./build.sh` does not install pytest) and `cd frontend && npm test`. CI runs
+  neither (`.github/workflows/release.yml` only checks the version bump, tags,
+  and builds the image), so run them yourself.
 
 ## Layout
 
