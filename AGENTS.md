@@ -22,7 +22,9 @@ claims against the code.
   `backend/certs/127.0.0.1+1.pem` and `backend/certs/127.0.0.1+1-key.pem` exist,
   and plain HTTP otherwise. It also starts a plain-HTTP bridge on `:12359`.
   `./tray.sh` runs the macOS menu-bar app. `./server-start.sh` runs server mode
-  without Docker.
+  without Docker. `./launchd.sh install` runs `./start.sh` as a per-user
+  LaunchAgent (starts at login, restarts on exit); run `./launchd.sh uninstall`
+  before moving or deleting the checkout.
 - Tests: `cd backend && ./.venv/bin/python -m pytest` and
   `cd frontend && npm test`. CI runs neither (`.github/workflows/release.yml`
   only checks the version bump, tags, and builds the image), so run them
