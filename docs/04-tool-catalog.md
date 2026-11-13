@@ -38,6 +38,7 @@ All tools are `ToolSpec` instances registered with `app.tools.registry`. They ar
 |---|---|
 | `browser_eval` | Execute arbitrary JavaScript in the user's active tab; returns result + console logs |
 | `get_page_title` | Return the `document.title` of the current tab |
+| `read_page` | Read the page's rendered text or HTML through the DOM, whole page or by CSS selector, without running JavaScript; works where the page's CSP forbids eval |
 
 ## Utility
 

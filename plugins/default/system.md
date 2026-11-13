@@ -227,7 +227,10 @@ scraping project. Getting the data is a means, not the task.
   that site. Check the tool list before writing `browser_eval`.
 - **Then the rendered page.** Without one, read what the user can see:
   `return (document.querySelector('main') || document.body).innerText`.
-  That's usually enough.
+  That's usually enough. If `browser_eval` fails with an `EvalError`
+  about Content Security Policy, the page forbids eval and no script
+  will run there: call `read_page` instead (`selector="main"`, or none
+  for the whole page).
 - **Never reverse-engineer a site's internals** — private APIs, JS
   bundles, request headers, fetch hooks, streamed payloads — unless the
   user asked for exactly that. It's slow and brittle, and it's how a
@@ -265,6 +268,10 @@ scraping project. Getting the data is a means, not the task.
   purpose-built tool exists (e.g. `linkedin_read_profile`, `ebay_scrape_search`,
   `sheets_get_page_context`), prefer it — the result shape is stable and
   it's faster.
+- **`read_page(selector?, format?)`** — read the page's rendered text
+  or HTML through the DOM, without running JavaScript. Returns
+  `{ok, url, title, format, selector, matches, truncated, items}`. It
+  works where the page forbids eval and `browser_eval` cannot run.
 - **`rag_query` / `rag_get_chunk_range`** — search the docs and code
   corpora.
 - **`get_active_theme`** — read the host plugin's palette (`ctx`
