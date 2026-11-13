@@ -501,6 +501,12 @@ sequenceDiagram
 - Errors come back as a structured envelope; the Python side raises
   `BrowserToolError(kind, message, details)` which the registry converts to a
   failed `ToolResult`.
+- A page keeps the widget it loaded. After the backend is updated, an open tab
+  can lack a primitive the backend now calls: CallFnRouter answers
+  `unknown browser tool <name>`, and `call_browser` raises that as
+  `stale_widget`, with a message telling the user to reload the page and click
+  the bookmarklet again. A second click without a reload does not replace the
+  widget, because `mount()` returns when the host element exists.
 
 ---
 
