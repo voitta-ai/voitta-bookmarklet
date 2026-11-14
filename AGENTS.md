@@ -29,6 +29,11 @@ claims against the code.
   (`./build.sh` does not install pytest) and `cd frontend && npm test`. CI runs
   neither (`.github/workflows/release.yml` only checks the version bump, tags,
   and builds the image), so run them yourself.
+- Plugin tests (today only `plugins/hedgehog/backend/tests`) are outside
+  `backend`'s test path. Run them from `backend/` with the plugin's `backend`
+  directory on `PYTHONPATH` and `-o asyncio_mode=auto`; without that option
+  every async test fails. Run them when you change code plugins share, such as
+  `call_browser`.
 
 ## Testing a browser tool end to end
 
@@ -59,6 +64,11 @@ To test against a Content-Security-Policy, serve the test page with that
 header. A probe run through the Chrome extension's JavaScript tool is exempt
 from the page's eval ban until its first `await` (seen 2026-11-13), so check
 the policy with an `eval` placed after an `await`.
+
+A page keeps the widget it loaded. To test a changed primitive, reload the page
+before appending the new `widget.js`: a second script on the same page does not
+replace the widget. To test the old-widget case (`stale_widget`), build
+`frontend/dist` from the previous tag and point `VOITTA_FRONTEND_DIST` at it.
 
 ## Layout
 
