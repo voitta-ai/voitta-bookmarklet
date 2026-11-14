@@ -484,7 +484,9 @@ async def _run_message_turn(user_msg: cl.Message, email: str | None) -> None:
         block = _element_to_image_block(el)
         if block is not None:
             content.append(block)
-    content.append({"type": "text", "text": user_msg.content})
+    # An image sent with no text gets no text block: providers reject an empty one.
+    if (user_msg.content or "").strip() or not content:
+        content.append({"type": "text", "text": user_msg.content})
 
     messages.append(LlmMessage(role="user", content=content))
 
