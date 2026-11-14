@@ -132,6 +132,20 @@ jobs:
           context: .
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: |
-            ghcr.io/${{ github.repository }}:${{ needs.tag-and-release.outputs.version }}
-            ghcr.io/${{ github.repository }}:latest
+          tags: ghcr.io/${{ github.repository }}:${{ needs.tag-and-release.outputs.version }}
+      # A build takes over an hour, so the builds of releases cut close together
+      # overlap. Only the newest release may take :latest; otherwise an older
+      # build that finishes late moves the tag back.
+      - name: Move latest to this version if it is the newest release
+        env:
+          IMAGE: ghcr.io/${{ github.repository }}
+          VERSION: ${{ needs.tag-and-release.outputs.version }}
+        run: |
+          set -euo pipefail
+          newest=$(git ls-remote --tags --refs origin 'v*' \
+            | sed 's#.*refs/tags/v##' | grep -E '^[0-9]+(\.[0-9]+)+$' | sort -V | tail -1)
+          if [ "$newest" = "$VERSION" ]; then
+            docker buildx imagetools create --tag "$IMAGE:latest" "$IMAGE:$VERSION"
+          else
+            echo "::notice::v$newest is newer than v$VERSION; :latest is left alone."
+          fi
