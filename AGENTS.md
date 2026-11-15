@@ -106,6 +106,11 @@ replace the widget. To test the old-widget case (`stale_widget`), build
   minutes (2026-11-15). A second job, `latest-tag`, then moves `:latest` to that
   image only if `vX.Y.Z` is still the newest tag, so releases cut close together
   cannot move `:latest` backwards.
+- The build keeps its layers in the GitHub Actions cache. The dependency layer
+  is rebuilt only when `backend/pyproject.toml` changes: in the `Dockerfile`,
+  keep `COPY backend/app` after the dependency install, or every code change
+  reinstalls the dependencies. With a warm cache a test build after a code
+  change took about four minutes (2026-11-15).
 - The default branch is `master`. Commit subjects use prefixes such as `feat:`,
   `fix:` and `deploy:`.
 
