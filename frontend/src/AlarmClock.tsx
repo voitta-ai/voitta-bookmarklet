@@ -2,6 +2,7 @@
 // (and again after every chat switch — ChatPane's scheduler disarms on
 // remount). The scheduler itself lives in ChatPane; this only arms + shows.
 
+import { readClock } from "./lib/pageClock";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   type LogEntry,
@@ -61,7 +62,7 @@ export default function AlarmClock({ backendOrigin, onEditRoutines }: Props) {
   const st = useAlarm();
   const [open, setOpen] = useState(false);
   const [err, setErr] = useState<string | null>(null);
-  const [now, setNow] = useState(() => Date.now());
+  const [now, setNow] = useState(() => readClock().now);
   const rootRef = useRef<HTMLDivElement | null>(null);
 
   const armed = st.routines?.find((r) => r.id === st.armedId) ?? null;
@@ -71,12 +72,13 @@ export default function AlarmClock({ backendOrigin, onEditRoutines }: Props) {
   // Clock face label ("next 14:30") stays fresh; ringing wiggle times out.
   useEffect(() => {
     if (!armed && !open) return;
-    const id = window.setInterval(() => setNow(Date.now()), 15_000);
+    // "next 14:30" follows the page's clock when it has one (a sped-up simulator).
+    const id = window.setInterval(() => setNow(readClock().now), readClock().page ? 1_000 : 15_000);
     return () => window.clearInterval(id);
   }, [armed, open]);
   useEffect(() => {
     if (st.ringingUntil <= Date.now()) return;
-    const id = window.setTimeout(() => setNow(Date.now()), st.ringingUntil - Date.now() + 50);
+    const id = window.setTimeout(() => setNow(readClock().now), st.ringingUntil - Date.now() + 50);
     return () => window.clearTimeout(id);
   }, [st.ringingUntil]);
 
@@ -94,7 +96,7 @@ export default function AlarmClock({ backendOrigin, onEditRoutines }: Props) {
 
   useEffect(() => {
     if (!open) return;
-    setNow(Date.now());
+    setNow(readClock().now);
     alarmStore.seen();
     void refresh();
     // The widget lives in a closed shadow root: a document listener only
@@ -122,7 +124,8 @@ export default function AlarmClock({ backendOrigin, onEditRoutines }: Props) {
   }, [open, refresh]);
 
   const next = armed ? nextSlots(armed, now, 1)[0] : undefined;
-  const ringing = st.ringingUntil > now;
+  // ringingUntil is real time (a short wiggle), unlike `now`, which may be the page's clock.
+  const ringing = st.ringingUntil > Date.now();
   const fired = st.log.filter((l) => l.outcome === "fired").length;
   const missed = st.log.filter((l) => OUTCOME[l.outcome].cls === "miss").length;
 

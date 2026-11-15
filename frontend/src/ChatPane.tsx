@@ -22,6 +22,7 @@ import type { ImageAttachment } from "./lib/image-attach";
 import { encodeFiles } from "./lib/attachments";
 import { useAuthConnect } from "./lib/useAuthConnect";
 import { useRoutineScheduler } from "./lib/useRoutineScheduler";
+import { announceAgent } from "./lib/pageClock";
 import { setChatHandle } from "./lib/notices";
 
 // One row of /api/agent_sdk/sessions/{id}/messages (see
@@ -223,6 +224,14 @@ export default function ChatPane({
     asking: !!askUser,
     send: (text) => sendMessage({ output: text, name: "user", type: "user_message" }, []),
   });
+
+  // Tell the host page while the agent works (a turn, or a question waiting for
+  // the user), so a page that runs its own clock can pause it. See pageClock.ts.
+  const agentBusy = busy || !!askUser;
+  useEffect(() => {
+    announceAgent(agentBusy);
+  }, [agentBusy]);
+  useEffect(() => () => announceAgent(false), []);
 
   // Let notice buttons (plugin banners) send a message as the user while
   // this chat is idle. A pending question counts as busy: a new message

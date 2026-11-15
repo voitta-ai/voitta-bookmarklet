@@ -83,6 +83,12 @@ describe("planTick", () => {
     expect(planTick([slot(0)], at, false, true).missed[0].outcome).toBe("asking");
   });
 
+  it("widens the stale window on a sped-up page clock", () => {
+    // 10 clock-minutes old: stale on the real clock, fresh on a 390x clock.
+    expect(planTick([slot(-600_000)], at, false, false).candidate).toBeNull();
+    expect(planTick([slot(-600_000)], at, false, false, 90_000 * 390).candidate?.at).toBe(at - 600_000);
+  });
+
   it("marks old slots stale and keeps only one candidate", () => {
     const p = planTick([slot(-600_000), slot(-10_000, "a"), slot(-5_000, "b")], at, false, false);
     expect(p.candidate?.chime.id).toBe("b");
