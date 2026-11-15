@@ -4,7 +4,8 @@
   "description": "Hedgehog Camp trading game (MIT 2026, powered by StockTrak): account, positions, orders, history and CSV exports, quotes and option chains, rankings, H-Token rewards; optional trading (stocks, ETFs, options, 22 option strategies) behind a settings switch, game-rule guardrails and per-order confirmation. Calls run from the user's own StockTrak tab; no credentials leave the browser.",
   "host_patterns": [
     "stocktrak.com",
-    "hedgehogcamp.ai"
+    "hedgehogcamp.ai",
+    "hedgehog.voitta.ai"
   ],
   "python_module": "voitta_hedgehog",
   "frontend_bundle": "frontend/widget.ts",

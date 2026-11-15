@@ -628,3 +628,43 @@ async def test_session_log_tool_reads_the_users_log(monkeypatch, tmp_path):
     r = await tools._session_log({}, CTX2)
     assert r["ok"] and [e["type"] for e in r["events"]] == ["first_ok", "logged_out"]
     assert r["logouts"][0]["via"] == "cross_tab"
+
+
+# ---- game clock ----------------------------------------------------------------
+
+async def test_game_clock_follows_stocktrak_date_header(monkeypatch):
+    """today/now come from StockTrak's Date header (the simulator sends simulated time there)."""
+    from voitta_hedgehog import tools
+
+    _core._clock_offset.clear()
+    monkeypatch.setattr(_core, "_last_offset", None)
+    ctx = SimpleNamespace(session_id="clock-test")
+
+    async def fake_call_browser(name, args, ctx, timeout_ms=None):
+        assert name == "hedgehog_request" and args["path"] == "/trading/ismarketopen"
+        return {"status": 200, "kind": "json", "path": args["path"], "ms": 5,
+                "server_date": "Tue, 03 Nov 2026 15:00:00 GMT",
+                "body": {"Success": True, "IsOpen": True, "Message": ""}}
+
+    monkeypatch.setattr(_core, "call_browser", fake_call_browser)
+    out = await tools._clock({}, ctx)
+    assert out["ok"] and out["market_open"] is True
+    assert out["date"] == "11/3/2026" and out["weekday"] == "Tuesday"
+    assert out["now_et"].startswith("2026-11-03T10:00") and out["source"] == "stocktrak_server"
+    assert _core.today_et(ctx) == "11/3/2026"
+
+
+def test_game_clock_falls_back_to_local_clock(monkeypatch):
+    _core._clock_offset.clear()
+    monkeypatch.setattr(_core, "_last_offset", None)
+    ctx = SimpleNamespace(session_id="fresh")
+    assert _core.clock_source(ctx) == "local_clock"
+    from datetime import datetime
+    assert _core.today_et(ctx) == (lambda d: f"{d.month}/{d.day}/{d.year}")(datetime.now(_core.ET))
+
+
+def test_bad_date_header_ignored():
+    _core._clock_offset.clear()
+    ctx = SimpleNamespace(session_id="bad")
+    _core.note_server_date(ctx, "not a date")
+    assert "bad" not in _core._clock_offset

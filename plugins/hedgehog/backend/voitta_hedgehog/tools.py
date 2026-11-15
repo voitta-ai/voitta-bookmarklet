@@ -16,7 +16,8 @@ from app.tools.registry import ToolCtx, ToolSpec, registry
 from voitta_hedgehog import rewards
 from voitta_hedgehog._core import (
     StockTrakError, attach_fills, body_of, csv_records, earliest_date, el_attr, fail, fix_key, keep_type,
-    norm_record, norm_value, now_et_iso, num, open_positions, rows_of, st_call, text_of, today_et,
+    clock_source, game_now, sync_clock, norm_record, norm_value, now_et_iso, num, open_positions, rows_of, st_call, text_of,
+    today_et,
 )
 from voitta_hedgehog.rules import SPREAD_TYPES, option_type_from_symbol
 
@@ -54,16 +55,36 @@ async def _page_context(args: dict[str, Any], ctx: ToolCtx) -> dict[str, Any]:
             m = body_of(await st_call(ctx, "POST", "/trading/ismarketopen", {"tab": "NorthAmerica", "exchange": "US"}))
             out["market_open"] = m.get("IsOpen")
             out["market_message"] = m.get("Message")
+            out["game_time_et"] = now_et_iso(ctx)
         except StockTrakError as exc:
             out["market_open_error"] = exc.kind
     return out
 
 _reg("hedgehog_page_context",
      "Call this FIRST for any Hedgehog Camp / StockTrak task. Returns {on_stocktrak, page_type, signed_in, "
-     "username, account_id, tournament_id, market_open}. If signed_in is false, ask the user to sign in at "
+     "username, account_id, tournament_id, market_open, game_time_et}. If signed_in is false, ask the user to sign in at "
      "app.stocktrak.com (tick 'Remember me') before anything else.",
      _NO_ARGS, _page_context)
 
+
+# ---- game clock ------------------------------------------------------------
+
+@_guard
+async def _clock(args: dict[str, Any], ctx: ToolCtx) -> dict[str, Any]:
+    res = await st_call(ctx, "POST", "/trading/ismarketopen", {"tab": "NorthAmerica", "exchange": "US"})
+    m = body_of(res)
+    t = game_now(ctx)
+    return {"ok": True, "now_et": t.isoformat(timespec="seconds"), "date": f"{t.month}/{t.day}/{t.year}",
+            "weekday": t.strftime("%A"), "market_open": m.get("IsOpen"),
+            "source": clock_source(ctx), "server_date": res.get("server_date"),
+            "note": "Game time = StockTrak's server clock (HTTP Date of its responses), in New York time. "
+                    "Use it, not your own sense of 'today', for dates, as-of times and market hours."}
+
+_reg("hedgehog_clock",
+     "The game's current time: StockTrak's own server clock, read from the user's tab. Returns {now_et, date "
+     "(M/D/YYYY), weekday, market_open}. Use this for 'today', as-of times and market hours instead of your own "
+     "notion of the date (the game may run on a different clock).",
+     _NO_ARGS, _clock)
 
 # ---- account ---------------------------------------------------------------
 
@@ -127,7 +148,8 @@ def account_checks(summary: dict[str, Any]) -> tuple[list[str], dict[str, Any]]:
 
 @_guard
 async def _account(args: dict[str, Any], ctx: ToolCtx) -> dict[str, Any]:
-    csv = await st_call(ctx, "GET", "/account/ExportToExcelPortfolioSummary", {"date": today_et()})
+    await sync_clock(ctx, st_call)
+    csv = await st_call(ctx, "GET", "/account/ExportToExcelPortfolioSummary", {"date": today_et(ctx)})
     raw = _summary_pairs(csv.get("rows") or [])
     # "Trades Made/Allowed: 26/9974" is made / REMAINING (it counts down from
     # 10,000: 18/9982 the day before), despite the label.
@@ -136,7 +158,7 @@ async def _account(args: dict[str, Any], ctx: ToolCtx) -> dict[str, Any]:
     empty = sorted(k for k, v in raw.items() if v == "")
     summary = norm_record({k: v for k, v in raw.items() if v != ""})
     warnings, checks = account_checks(summary)
-    return {"ok": True, "as_of_et": now_et_iso(), "summary": summary,
+    return {"ok": True, "as_of_et": now_et_iso(ctx), "summary": summary,
             "trades_made": int(made) if made.isdigit() else None,
             "trades_remaining": int(remaining) if remaining.isdigit() else None,
             "trades_allowed": int(made) + int(remaining) if made.isdigit() and remaining.isdigit() else None,
@@ -177,7 +199,7 @@ async def _positions(args: dict[str, Any], ctx: ToolCtx) -> dict[str, Any]:
         r.update({k: v for k, v in (ids.get(r.get("Symbol", "")) or {}).items() if v is not None and v != ""})
     if not recs:  # CSV empty: fall back to ids only
         recs = [{"Symbol": s, **{k: v for k, v in i.items() if v is not None and v != ""}} for s, i in ids.items()]
-    return {"ok": True, "as_of_et": now_et_iso(), "security_type": stype, "count": len(recs), "positions": recs,
+    return {"ok": True, "as_of_et": now_et_iso(ctx), "security_type": stype, "count": len(recs), "positions": recs,
             "note": "Numbers are plain (money to cents, prices to 4 dp, ProfitLossPercentage in percent). LastPrice "
                     "can still be the previous close early in the session, so MarketValue may not match "
                     "hedgehog_account at that moment. security_id / underlying_security_id are what "
@@ -245,7 +267,7 @@ async def _join_fills(ctx: ToolCtx, orders: list[dict[str, Any]]) -> str:
         return ""
     try:
         res = await st_call(ctx, "GET", "/admin/ExportTransactionHistory",
-                            {"from": earliest_date(orders) or "1/1/2026", "to": today_et()})
+                            {"from": earliest_date(orders) or "1/1/2026", "to": today_et(ctx)})
     except StockTrakError as exc:
         for o in orders:
             if "fill" in str(o.get("status") or "").lower():
@@ -283,13 +305,14 @@ async def _report(ctx: ToolCtx, report: str, args: dict[str, Any]) -> dict[str, 
     if report not in _REPORTS:
         raise ValueError(f"report must be one of {sorted(_REPORTS)}")
     path, ranged = _REPORTS[report]
+    await sync_clock(ctx, st_call)
     params: dict[str, Any] = {}
     if ranged:
-        params = {"from": args.get("start_date") or "1/1/2026", "to": args.get("end_date") or today_et()}
+        params = {"from": args.get("start_date") or "1/1/2026", "to": args.get("end_date") or today_et(ctx)}
     elif report == "open_positions":
         params = {"securityType": {"option": "Options"}.get(str(args.get("security_type")), "Equities")}
     elif report in ("portfolio_summary", "historical_open_positions"):
-        params = {"date": args.get("date") or today_et()}
+        params = {"date": args.get("date") or today_et(ctx)}
     return await st_call(ctx, "GET", path, params)
 
 

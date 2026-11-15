@@ -9,7 +9,8 @@ hedgehogcamp.ai only `hedgehog_rewards` works; the others return `wrong_host`.
 
 | Tool | Returns |
 |---|---|
-| `hedgehog_page_context` | `on_stocktrak, page_type, signed_in, username, account_id, tournament_id, market_open, market_message` |
+| `hedgehog_page_context` | `on_stocktrak, page_type, signed_in, username, account_id, tournament_id, market_open, market_message, game_time_et` |
+| `hedgehog_clock` | `now_et, date, weekday, market_open, source, server_date`: the game's time = StockTrak's server clock (HTTP `Date` of its responses). Every date the tools default to (`today`) uses it. |
 
 `signed_in: false` → ask the user to sign in at app.stocktrak.com with "Remember me" ticked (sessions
 without it expire overnight).
