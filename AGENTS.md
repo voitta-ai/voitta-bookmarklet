@@ -100,9 +100,12 @@ replace the widget. To test the old-widget case (`stale_widget`), build
   `src/voitta_bookmarklet/_version.py`.
 - A push to `master` with a new version tags `vX.Y.Z`, creates the GitHub
   release, and builds and pushes `ghcr.io/voitta-ai/voitta-bookmarklet:X.Y.Z`
-  (linux/amd64 and linux/arm64). The build takes one to two hours. When it
-  finishes it moves `:latest` to that image only if `vX.Y.Z` is still the newest
-  tag, so releases cut close together cannot move `:latest` backwards.
+  (linux/amd64 and linux/arm64). Docker's reusable workflow
+  (`docker/github-builder`) builds each platform on its own native runner and
+  signs the image's attestations. A test build of both platforms took about six
+  minutes (2026-11-15). A second job, `latest-tag`, then moves `:latest` to that
+  image only if `vX.Y.Z` is still the newest tag, so releases cut close together
+  cannot move `:latest` backwards.
 - The default branch is `master`. Commit subjects use prefixes such as `feat:`,
   `fix:` and `deploy:`.
 
