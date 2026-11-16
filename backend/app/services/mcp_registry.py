@@ -65,9 +65,12 @@ class _Target:
 def _live_sessions() -> list[dict[str, Any]]:
     from app.services import cl_sessions
 
-    active = cl_sessions.get_active_session()
+    from app.services.mcp_auth import owner_filter
+
+    owner = owner_filter()
+    active = cl_sessions.get_active_session(owner=owner)
     rows = []
-    for rec in cl_sessions.snapshot():
+    for rec in cl_sessions.snapshot(owner=owner):
         if not rec.get("connected"):
             continue
         rows.append({
@@ -90,12 +93,17 @@ def _resolve(session_id: str | None) -> _Target | dict[str, Any]:
 
     from app.services import cl_sessions
 
+    from app.services.mcp_auth import owner_filter
+
+    owner = owner_filter()  # server mode: the API key's user; only their tabs exist for them
     if not session_id:
-        active = cl_sessions.get_active_session()
+        active = cl_sessions.get_active_session(owner=owner)
         if active is None:
-            return _Target(None, None, None, None)
+            return _Target(None, None, owner, None)  # page-less: server-side tools, as the caller
         session_id = active.session_id
     ws = WebsocketSession.get_by_id(session_id)
+    if ws is not None and owner is not None and cl_sessions.owner_of(session_id) != owner:
+        ws = None  # another user's tab looks exactly like a closed one
     if ws is None:
         return {"ok": False, "error": "no_session",
                 "message": f"no open page with session_id {session_id!r} — "

@@ -84,6 +84,18 @@ CREATE TABLE IF NOT EXISTS activity(
   ip TEXT
 );
 CREATE INDEX IF NOT EXISTS activity_at ON activity(at);
+CREATE TABLE IF NOT EXISTS api_keys(
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER NOT NULL,
+  name TEXT NOT NULL,
+  prefix TEXT NOT NULL,
+  key_hash TEXT NOT NULL UNIQUE,
+  scopes TEXT NOT NULL,
+  created_at REAL NOT NULL,
+  last_used REAL,
+  revoked_at REAL
+);
+CREATE INDEX IF NOT EXISTS api_keys_user ON api_keys(user_id);
 """
 
 
@@ -154,6 +166,7 @@ def reset_for_tests() -> None:
         _conn = _conn_path = None
         _site_cache.clear()
         _seen.clear()
+        _key_seen.clear()
 
 
 # ── emails, owners, roles ────────────────────────────────────────────────
@@ -199,13 +212,15 @@ def public(u: dict, now: float | None = None) -> dict:
         "last_method": u.get("last_method"),
         "created_at": u.get("created_at"),
         "created_by": u.get("created_by"),
+        "api_keys": int(u.get("api_keys") or 0),
     }
 
 
 def list_users() -> list[dict]:
     """Active users first (owners, then admins, then users, each by email); disabled ones last."""
     rank = {"owner": 0, "admin": 1, "user": 2}
-    rows = _all("SELECT * FROM users")
+    rows = _all("SELECT u.*, (SELECT COUNT(*) FROM api_keys k WHERE k.user_id = u.id AND k.revoked_at IS NULL)"
+                " AS api_keys FROM users u")
     rows.sort(key=lambda u: (u.get("disabled_at") is not None, rank.get(role_of(u), 3), u["email"]))
     return [public(u) for u in rows]
 
@@ -498,3 +513,109 @@ def remove_site(owner: str, origin: str, *, ip: str | None = None) -> None:
     _x("DELETE FROM sites WHERE owner=? AND origin=?", (owner, o))
     _site_cache.pop(owner, None)
     log("site.remove", actor=owner, target=o, ip=ip)
+
+
+# ── API keys (Claude Code / MCP) ─────────────────────────────────────────
+# A key acts as its user over MCP (server mode). Shown once at creation; only its SHA-256 is stored
+# (keys are 256-bit random, so a fast hash is enough). It stops working when revoked or when the
+# user is disabled. Each key carries scopes: which MCP tool families it may use.
+
+KEY_PREFIX = "vbk_"
+SCOPES = ("agent", "debug", "chat")  # vb_* agent tools · mcp_* debug tools · mcp_inject_text
+DEFAULT_SCOPES = ("agent",)
+MAX_KEYS = 20
+_KEY_SEEN_EVERY_S = 60
+_key_seen: dict[int, float] = {}
+
+
+def _key_hash(key: str) -> str:
+    import hashlib
+
+    return hashlib.sha256(key.encode("utf-8")).hexdigest()
+
+
+def _clean_scopes(scopes: Any) -> list[str]:
+    if scopes is None:
+        return list(DEFAULT_SCOPES)
+    if isinstance(scopes, str):
+        scopes = re.split(r"[,\s]+", scopes)
+    out = [s for s in SCOPES if s in {str(x).strip().lower() for x in scopes}]
+    if not out:
+        raise UserError("Pick at least one thing the key may do.")
+    return out
+
+
+def _key_public(row: dict) -> dict:
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "prefix": row["prefix"],
+        "scopes": row["scopes"].split(","),
+        "created_at": row["created_at"],
+        "last_used": row["last_used"],
+    }
+
+
+def create_key(email: str, name: str, scopes: Any = None, *, ip: str | None = None) -> tuple[str, dict]:
+    """New key for ``email``. Returns ``(plaintext, public row)``; the plaintext is never stored."""
+    u = _need(email)
+    if u.get("disabled_at") is not None:
+        raise UserError(f"{u['email']} is disabled.")
+    name = " ".join(str(name or "").split())[:60] or "Claude Code"
+    sc = _clean_scopes(scopes)
+    live = _one("SELECT COUNT(*) AS n FROM api_keys WHERE user_id=? AND revoked_at IS NULL", (u["id"],))
+    if live and live["n"] >= MAX_KEYS:
+        raise UserError(f"You already have {MAX_KEYS} keys. Revoke one first.")
+    key = KEY_PREFIX + secrets.token_urlsafe(32)
+    cur = _x("INSERT INTO api_keys(user_id, name, prefix, key_hash, scopes, created_at) VALUES (?,?,?,?,?,?)",
+             (u["id"], name, key[:12], _key_hash(key), ",".join(sc), time.time()))
+    log("key.create", actor=u["email"], target=u["email"], detail={"name": name, "scopes": sc}, ip=ip)
+    return key, _key_public(_one("SELECT * FROM api_keys WHERE id=?", (cur.lastrowid,)))
+
+
+def list_keys(email: str) -> list[dict]:
+    u = get(email)
+    if u is None:
+        return []
+    rows = _all("SELECT * FROM api_keys WHERE user_id=? AND revoked_at IS NULL ORDER BY created_at DESC", (u["id"],))
+    return [_key_public(r) for r in rows]
+
+
+def revoke_key(email: str, key_id: int, *, actor: str | None = None, ip: str | None = None) -> bool:
+    """Revoke one of ``email``'s keys. False if it isn't theirs (or already revoked)."""
+    u = get(email)
+    if u is None:
+        return False
+    cur = _x("UPDATE api_keys SET revoked_at=? WHERE id=? AND user_id=? AND revoked_at IS NULL",
+             (time.time(), int(key_id), u["id"]))
+    if cur.rowcount:
+        log("key.revoke", actor=actor or u["email"], target=u["email"], detail={"id": int(key_id)}, ip=ip)
+    return bool(cur.rowcount)
+
+
+def revoke_all_keys(email: str, *, actor: str | None = None, ip: str | None = None) -> int:
+    u = _need(email)
+    cur = _x("UPDATE api_keys SET revoked_at=? WHERE user_id=? AND revoked_at IS NULL", (time.time(), u["id"]))
+    if cur.rowcount:
+        log("key.revoke_all", actor=actor, target=u["email"], detail={"count": cur.rowcount}, ip=ip)
+    return cur.rowcount
+
+
+def key_user(key: str | None) -> tuple[dict, list[str]] | None:
+    """``(user, scopes)`` for a live key of an active user, else None. Touches last_used (throttled)."""
+    key = str(key or "").strip()
+    if not key.startswith(KEY_PREFIX) or len(key) > 200:
+        return None
+    row = _one(
+        "SELECT k.id AS kid, k.scopes, k.revoked_at, u.* FROM api_keys k JOIN users u ON u.id = k.user_id "
+        "WHERE k.key_hash=?", (_key_hash(key),))
+    if row is None or row["revoked_at"] is not None or row["disabled_at"] is not None:
+        return None
+    now = time.time()
+    if now - _key_seen.get(row["kid"], 0) > _KEY_SEEN_EVERY_S:
+        _key_seen[row["kid"]] = now
+        _x("UPDATE api_keys SET last_used=? WHERE id=?", (now, row["kid"]))
+    scopes = row.pop("scopes").split(",")
+    for k in ("kid", "revoked_at"):
+        row.pop(k, None)
+    return row, scopes

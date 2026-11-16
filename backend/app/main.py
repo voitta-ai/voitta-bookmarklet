@@ -175,12 +175,24 @@ class _AuthGuard:
         email = None
         if server:
             headers = {k.lower(): v for k, v in scope.get("headers", [])}
-            email, _sid = _login_auth.live_email_from_cookie_header(
-                headers.get(b"cookie", b"").decode("latin-1")
-            )
-            if not email:
-                await _deny(scope, send, 401, "login_required")
-                return
+            if scope.get("path", "").startswith("/mcp"):
+                # MCP clients (Claude Code) authenticate with a per-user API key, never a cookie.
+                from app.services import mcp_auth as _mcp_auth
+
+                caller = _mcp_auth.caller_from_headers(headers)
+                if caller is None:
+                    await _deny(scope, send, 401, "api_key_required", {
+                        "detail": "Send 'Authorization: Bearer <key>'. Create a key at "
+                                  "/auth/keys (Settings → Account → API keys)."})
+                    return
+                email = caller.email
+            else:
+                email, _sid = _login_auth.live_email_from_cookie_header(
+                    headers.get(b"cookie", b"").decode("latin-1")
+                )
+                if not email:
+                    await _deny(scope, send, 401, "login_required")
+                    return
         owner = email or _users.LOCAL_OWNER
         if kind == "site" and not _users.site_approved(owner, origin):
             await _deny(scope, send, 403, "site_not_approved", {"origin": origin})

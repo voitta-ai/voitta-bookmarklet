@@ -334,13 +334,26 @@ A family that is off is neither listed nor callable. Every tool's
 description starts with `[Agent tools]`, `[Debugging]` or `[In-app agent]`, and the server
 instructions tell clients which family to use for what. The endpoint is
 also loopback-only and refuses requests carrying a browser `Origin`.
-Under Docker the peer is the container bridge, not loopback, so `/mcp`
-refuses it; run from source to use it.
 
 Connect Claude Code (the URL is in the tray's Settings dialog):
 
 ```bash
 claude mcp add --transport http voitta-bookmarklet https://127.0.0.1:12358/mcp/
+```
+
+**Shared server (accounts on):** `/mcp` is reachable over the internet but needs a
+per-user API key. Each user creates keys at `/auth/keys` (Settings → Account →
+API keys); a key is shown once, stored only as a hash, and stops working when
+revoked or when its user is disabled. Instead of the tray switches, each key
+carries its own permissions: agent tools (`vb_*`, on by default), debug tools
+(`mcp_*`) and chat (`mcp_inject_text`). A key acts as its user: it only lists and
+reaches that user's open tabs, and runs with that user's settings and data.
+Admins can revoke a user's keys in Settings → Users. The keys page prints the
+command:
+
+```bash
+claude mcp add --transport http voitta https://bookmarklet.voitta.ai/mcp/ \
+  --header "Authorization: Bearer vbk_…"
 ```
 
 ### Docs

@@ -3,7 +3,7 @@
 // sign out. Both modes: the sites Voitta may run on, with Remove.
 
 import { useCallback, useEffect, useState } from "react";
-import { openChangePassword, useAuth } from "../lib/auth";
+import { openApiKeys, openChangePassword, useAuth } from "../lib/auth";
 
 interface Site {
   origin: string;
@@ -16,6 +16,7 @@ interface Account {
   role?: string;
   has_password?: boolean;
   has_google?: boolean;
+  api_keys?: number;
   sites: Site[];
 }
 
@@ -79,6 +80,23 @@ export default function AccountPanel({ backendOrigin }: { backendOrigin: string 
           </div>
         </section>
       ) : (
+        <></>
+      )}
+
+      {acct.server && (
+        <section>
+          <div style={{ fontWeight: 600, marginBottom: 4 }}>Claude Code (MCP)</div>
+          <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>
+            Connect Claude Code to Voitta with an API key. It acts as you, in your open tabs.
+            {typeof acct.api_keys === "number" && ` You have ${acct.api_keys} key${acct.api_keys === 1 ? "" : "s"}.`}
+          </div>
+          <button type="button" className="secondary-btn" onClick={() => openApiKeys(backendOrigin).then(load)}>
+            API keys ↗
+          </button>
+        </section>
+      )}
+
+      {acct.server ? null : (
         <p className="muted">This app runs on your computer and has no account.</p>
       )}
 

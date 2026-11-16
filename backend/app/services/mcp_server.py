@@ -114,6 +114,15 @@ async def _call_in_session(
 
     _log.info("MCP▶ looking up WebsocketSession for %s", session_id)
     session = WebsocketSession.get_by_id(session_id)
+    # Server mode: an API key only reaches its own user's tabs. Another user's tab answers exactly
+    # like a missing one, so a key can't even learn it exists.
+    from app.services import cl_sessions as _cls
+    from app.services.mcp_auth import owner_filter
+
+    owner = owner_filter()
+    if session is not None and owner is not None and _cls.owner_of(session_id) != owner:
+        _log.warning("MCP▶ %s refused: session %s belongs to another user", owner, session_id)
+        session = None
     if session is None:
         _log.warning("MCP▶ no WebsocketSession for %s — known sessions: %s",
                      session_id,
@@ -284,29 +293,75 @@ class _FamilyGate(Middleware):
     """Hide and refuse each tool family by its own setting, read per request
     so the tray switches apply without a restart."""
 
+    _SCOPE_LABEL = {"agent": "Agent tools", "debug": "Debug tools", "chat": "Chat"}
+
     @staticmethod
-    def _family(name: str) -> tuple[bool, str]:
-        """(enabled, the switch's label in the tray) for a tool name."""
-        from app.services import user_settings as us
+    def _scope_of(name: str) -> str:
         from app.services.mcp_registry import FAMILY_PREFIX
 
         if name in _CHAT_TOOLS:
-            return us.mcp_chat_enabled(), "Let external agents message the in-app agent"
-        if name.startswith(FAMILY_PREFIX):
-            return us.mcp_tools_enabled(), "Expose agent tools to external agents"
-        return us.mcp_debug_enabled(), "Enable MCP debugging tools"
+            return "chat"
+        return "agent" if name.startswith(FAMILY_PREFIX) else "debug"
+
+    @staticmethod
+    def _caller():
+        """Server mode: ``(caller or None, True)`` from this call's API key. Desktop: ``(None, False)``.
+
+        Read from the raw request: fastmcp's get_http_headers() drops Authorization on purpose."""
+        from app.services import login_auth, mcp_auth
+
+        if not login_auth.is_enabled():
+            return None, False
+        try:
+            from fastmcp.server.dependencies import get_http_request
+
+            return mcp_auth.caller_from_headers(get_http_request().headers), True
+        except Exception:
+            return None, True
+
+    @classmethod
+    def _family(cls, name: str, caller=None, server: bool = False) -> tuple[bool, str]:
+        """(enabled, what to turn on) for a tool name."""
+        if server:
+            scope = cls._scope_of(name)
+            return bool(caller and scope in caller.scopes), \
+                f"a key with '{cls._SCOPE_LABEL[scope]}' ticked (Settings → Account → API keys)"
+        from app.services import user_settings as us
+
+        scope = cls._scope_of(name)
+        if scope == "chat":
+            return us.mcp_chat_enabled(), "'Let external agents message the in-app agent' in the Voitta tray → Settings"
+        if scope == "agent":
+            return us.mcp_tools_enabled(), "'Expose agent tools to external agents' in the Voitta tray → Settings"
+        return us.mcp_debug_enabled(), "'Enable MCP debugging tools' in the Voitta tray → Settings"
 
     async def on_list_tools(self, context: MiddlewareContext, call_next):
+        caller, server = self._caller()
         tools = await call_next(context)
-        return [t for t in tools if self._family(t.name)[0]]
+        return [t for t in tools if self._family(t.name, caller, server)[0]]
 
     async def on_call_tool(self, context: MiddlewareContext, call_next):
+        from app.services import mcp_auth
+        from app.services.current_user import reset_current_email, set_current_email
+
         name = context.message.name
-        enabled, switch = self._family(name)
+        caller, server = self._caller()
+        if server and caller is None:
+            raise ToolError("API key missing, revoked or its user disabled.")
+        enabled, what = self._family(name, caller, server)
         if not enabled:
-            raise ToolError(f"{name} is switched off — turn on '{switch}' in the Voitta "
-                            "tray → Settings.")
-        return await call_next(context)
+            if server:
+                raise ToolError(f"{name} isn't allowed — it needs {what}.")
+            raise ToolError(f"{name} is switched off — turn on {what}.")
+        if not server:
+            return await call_next(context)
+        # Run the whole call as the key's user: their settings, data and only their tabs.
+        ctok, etok = mcp_auth.set_caller(caller), set_current_email(caller.email)
+        try:
+            return await call_next(context)
+        finally:
+            reset_current_email(etok)
+            mcp_auth.reset_caller(ctok)
 
 
 def get_server() -> FastMCP:
@@ -359,7 +414,9 @@ def get_server() -> FastMCP:
         """
         from app.services import cl_sessions
 
-        records = cl_sessions.snapshot()
+        from app.services.mcp_auth import owner_filter
+
+        records = cl_sessions.snapshot(owner=owner_filter())
         return {"count": len(records), "sessions": records}
 
     @mcp.tool()

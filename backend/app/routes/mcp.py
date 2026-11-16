@@ -43,7 +43,13 @@ def _refuse(status: int, message: str) -> JSONResponse:
 
 
 class _MCPGate:
-    """ASGI middleware: enforce localhost + Origin-absent + kill switch."""
+    """ASGI middleware.
+
+    Desktop: localhost + Origin-absent + kill switch (the tray settings).
+    Server (accounts on): a valid per-user API key + Origin-absent; what the key may do is its
+    scopes, checked per call by mcp_server._FamilyGate. The loopback rule doesn't apply — the
+    server is reached over the internet through nginx.
+    """
 
     def __init__(self, app: ASGIApp) -> None:
         self.app = app
@@ -54,6 +60,30 @@ class _MCPGate:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
+
+        async def send_unbuffered(message) -> None:
+            # Tell nginx not to buffer streamed (SSE) replies.
+            if message["type"] == "http.response.start":
+                message = {**message, "headers": [*message.get("headers", []),
+                                                  (b"x-accel-buffering", b"no")]}
+            await send(message)
+
+        from app.services import login_auth as _login_auth
+        from app.services import mcp_auth as _mcp_auth
+
+        if _login_auth.is_enabled():
+            request = Request(scope, receive)
+            if request.headers.get("origin"):
+                await _refuse(403, "/mcp rejects browser Origin (use a CLI / desktop MCP client, "
+                                   "not a tab)")(scope, receive, send)
+                return
+            if _mcp_auth.caller_from_headers(request.headers) is None:
+                await _refuse(401, "Send 'Authorization: Bearer <key>'. Create a key at /auth/keys "
+                                   "(Settings → Account → API keys).")(scope, receive, send)
+                return
+            await self.app(scope, receive, send_unbuffered)
+            return
+
         # Open when either tool family is on; each family then checks its
         # own switch per call (mcp_server._FamilyGate), so one switch never
         # exposes the other family.
@@ -79,7 +109,7 @@ class _MCPGate:
                 "client, not a tab)",
             )(scope, receive, send)
             return
-        await self.app(scope, receive, send)
+        await self.app(scope, receive, send_unbuffered)
 
 
 def build_mcp_asgi():

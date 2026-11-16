@@ -13,6 +13,7 @@ interface User {
   disabled_at: number | null;
   disabled_by: string | null;
   locked_minutes: number;
+  api_keys: number;
   last_seen: number | null;
 }
 
@@ -214,6 +215,11 @@ function UserRow({
   if (u.has_password)
     items.push({ label: "Remove password", run: () => act("password", { email: u.email, mode: "remove" }, "Password removed.") });
   if (u.locked_minutes) items.push({ label: "Unlock", run: () => act("unlock", { email: u.email }, `${u.email} unlocked.`) });
+  if (u.api_keys)
+    items.push({
+      label: `Revoke API keys (${u.api_keys})`,
+      run: () => act("revoke-keys", { email: u.email }, `${u.email}: API keys revoked.`),
+    });
   items.push({
     label: "Sign out everywhere",
     run: () => act("sign-out", { email: u.email }, `${u.email} was signed out everywhere.`),
@@ -231,7 +237,8 @@ function UserRow({
           </div>
           <div className="muted" style={{ fontSize: 12 }}>
             {how}
-            {u.locked_minutes ? ` · 🔒 ${u.locked_minutes} min` : ""} · seen {ago(u.last_seen)}
+            {u.locked_minutes ? ` · 🔒 ${u.locked_minutes} min` : ""}
+            {u.api_keys ? ` · ${u.api_keys} API key${u.api_keys === 1 ? "" : "s"}` : ""} · seen {ago(u.last_seen)}
           </div>
         </div>
         <button type="button" className="secondary-btn" aria-label={`Actions for ${u.email}`} onClick={onMenu}>

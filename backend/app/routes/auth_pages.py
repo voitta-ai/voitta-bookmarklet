@@ -52,6 +52,15 @@ button:disabled{opacity:.55;cursor:default}
 .or{display:flex;align-items:center;gap:10px;color:var(--muted);font-size:13px;margin:20px 0 4px}
 .or:before,.or:after{content:"";flex:1;border-top:1px solid var(--border)}
 .site{font-family:ui-monospace,Menlo,monospace;word-break:break-all}
+h2{font-size:15px;margin:26px 0 6px}
+.chk{display:flex;gap:8px;align-items:flex-start;color:var(--fg);font-size:14px;margin:6px 0}
+.chk input{width:auto;margin-top:3px}
+.copyrow{display:flex;gap:6px;align-items:stretch;margin:6px 0}
+.copyrow input,.copyrow textarea{flex:1;min-width:0;font:12px/1.4 ui-monospace,Menlo,monospace;padding:7px;border:1px solid var(--border);border-radius:7px;background:var(--field);color:var(--fg);resize:none}
+.copyrow button{width:auto;margin-top:0;padding:6px 12px}
+.keyrow{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--border)}
+.keyrow button,button.small{width:auto;margin-top:0;padding:5px 12px}
+.small{font-size:12px}
 """
 
 _G = (
@@ -348,3 +357,98 @@ $('f').addEventListener('submit', async function(e){
   $('go').disabled = false;
 });"""
     return _page("Change password", body, script)
+
+
+@router.get("/auth/keys", include_in_schema=False)
+async def keys_page() -> HTMLResponse:
+    """API keys for Claude Code / MCP: create (shown once), list, revoke. Our own origin only."""
+    if not login_auth.is_enabled():
+        return message("No keys needed", "On the desktop app, /mcp is local to this computer and needs no key.")
+    body = """
+<h1>API keys for Claude Code</h1>
+<p id=who class=muted></p>
+<div id=new hidden>
+  <label for=name>Name</label><input id=name maxlength=60 placeholder="Claude Code on my laptop">
+  <label>This key may</label>
+  <label class=chk><input type=checkbox id=s_agent checked> Use your Voitta tools (StockTrak and
+    other plugins) in your open tabs</label>
+  <label class=chk><input type=checkbox id=s_debug> Run JavaScript and take screenshots in your open tabs</label>
+  <label class=chk><input type=checkbox id=s_chat> Post messages into your Voitta chat</label>
+  <button class=primary id=create type=button>Create key</button>
+  <p class=err id=err role=alert></p>
+</div>
+<div id=made hidden>
+  <p><b>Your new key</b> (shown once; store it like a password):</p>
+  <div class=copyrow><input id=keyval readonly><button type=button data-copy=keyval>Copy</button></div>
+  <p class=muted>Add it to Claude Code:</p>
+  <div class=copyrow><textarea id=cmd rows=3 readonly></textarea><button type=button data-copy=cmd>Copy</button></div>
+  <button type=button id=again>Done</button>
+</div>
+<h2>Your keys</h2>
+<div id=list><p class=muted>Loading…</p></div>
+<p class=muted style="font-size:13px">Tools that work on a page need that page open with the Voitta widget.
+A key acts as you; revoke it if it leaks. Keys stop working if your account is disabled.</p>"""
+    script = r"""
+var $ = function(id){ return document.getElementById(id); };
+function ago(t){ if(!t) return 'never'; var s=Date.now()/1000-t;
+  if(s<120) return 'just now'; if(s<3600) return Math.round(s/60)+' min ago';
+  if(s<86400) return Math.round(s/3600)+' h ago'; return new Date(t*1000).toLocaleDateString(); }
+var LABEL = {agent:'tools', debug:'JavaScript', chat:'chat'};
+async function api(method, path, body){
+  var r = await fetch(path, {method: method, headers: body ? {'Content-Type':'application/json'} : {},
+    body: body ? JSON.stringify(body) : undefined});
+  var b = {}; try { b = await r.json(); } catch(_ ) {}
+  if (!r.ok) throw new Error(b.detail || ('status ' + r.status));
+  return b;
+}
+function render(keys){
+  var box = $('list'); box.innerHTML = '';
+  if (!keys.length) { box.innerHTML = '<p class=muted>No keys yet.</p>'; return; }
+  keys.forEach(function(k){
+    var row = document.createElement('div'); row.className = 'keyrow';
+    var info = document.createElement('div');
+    var t = document.createElement('b'); t.textContent = k.name; info.appendChild(t);
+    var m = document.createElement('div'); m.className = 'muted small';
+    m.textContent = k.prefix + '… · ' + k.scopes.map(function(s){ return LABEL[s] || s; }).join(', ') +
+      ' · created ' + ago(k.created_at) + ' · used ' + ago(k.last_used);
+    info.appendChild(m); row.appendChild(info);
+    var b = document.createElement('button'); b.type = 'button'; b.textContent = 'Revoke'; b.className = 'small';
+    b.onclick = async function(){
+      if (!confirm('Revoke "' + k.name + '"? Anything using it stops working.')) return;
+      try { render((await api('DELETE', '/api/account/keys/' + k.id)).keys); } catch(e) { $('err').textContent = e.message; }
+    };
+    row.appendChild(b); box.appendChild(row);
+  });
+}
+(async function(){
+  var me = await (await fetch('/api/auth/me')).json();
+  if (!me.authenticated) { $('who').innerHTML = 'Sign in first. <a href="/auth/signin">Sign in</a>'; $('list').innerHTML=''; return; }
+  $('who').textContent = 'Signed in as ' + me.email;
+  $('new').hidden = false;
+  try { render((await api('GET', '/api/account/keys')).keys); } catch(e) { $('list').textContent = e.message; }
+})();
+$('create').onclick = async function(){
+  $('err').textContent = '';
+  var scopes = ['agent','debug','chat'].filter(function(s){ return $('s_' + s).checked; });
+  if (!scopes.length) { $('err').textContent = 'Tick at least one.'; return; }
+  $('create').disabled = true;
+  try {
+    var b = await api('POST', '/api/account/keys', {name: $('name').value, scopes: scopes});
+    $('keyval').value = b.key;
+    $('cmd').value = 'claude mcp add --transport http voitta ' + location.origin +
+      '/mcp/ --header "Authorization: Bearer ' + b.key + '"';
+    $('new').hidden = true; $('made').hidden = false; $('name').value = '';
+    render((await api('GET', '/api/account/keys')).keys);
+  } catch(e) { $('err').textContent = e.message; }
+  $('create').disabled = false;
+};
+$('again').onclick = function(){ $('keyval').value=''; $('cmd').value=''; $('made').hidden = true; $('new').hidden = false; };
+document.querySelectorAll('[data-copy]').forEach(function(b){
+  b.onclick = async function(){
+    var el = $(b.getAttribute('data-copy'));
+    try { await navigator.clipboard.writeText(el.value); b.textContent = 'Copied'; }
+    catch(_ ) { el.select(); document.execCommand('copy'); b.textContent = 'Copied'; }
+    setTimeout(function(){ b.textContent = 'Copy'; }, 1500);
+  };
+});"""
+    return _page("API keys", body, script)
