@@ -22,7 +22,7 @@ import type { ImageAttachment } from "./lib/image-attach";
 import { encodeFiles } from "./lib/attachments";
 import { useAuthConnect } from "./lib/useAuthConnect";
 import { useRoutineScheduler } from "./lib/useRoutineScheduler";
-import { announceAgent, holdStore, markStopped, releaseHold } from "./lib/pageClock";
+import { announceAgent, holdStore, markStopped, releaseHold, resetAgent } from "./lib/pageClock";
 import { clearNotice, setChatHandle, showNotice } from "./lib/notices";
 
 // How long the agent must look idle before the page is told (see the announce effect).
@@ -245,8 +245,7 @@ export default function ChatPane({
   }, [agentBusy]);
   // Leaving the chat hands the page back, held or not.
   useEffect(() => () => {
-    announceAgent(false);
-    releaseHold();
+    resetAgent();
     clearNotice(HOLD_NOTICE);
   }, []);
 

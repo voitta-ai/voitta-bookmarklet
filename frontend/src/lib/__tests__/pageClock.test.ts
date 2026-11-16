@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from "vitest";
-import { announceAgent, holdStore, isHeld, markStopped, readClock, releaseHold } from "../pageClock";
+import { announceAgent, holdStore, isHeld, markStopped, readClock, releaseHold, resetAgent } from "../pageClock";
 
 const w = window as unknown as { voittaPageClock?: unknown };
 
@@ -70,7 +70,28 @@ describe("hold after each run", () => {
 
   afterEach(() => {
     holdStore.setEnabled(false);
-    announceAgent(false);
+    resetAgent();
+  });
+
+  it("never holds when the widget loads or a chat opens (no run has happened)", () => {
+    holdStore.setEnabled(true);
+    resetAgent(); // fresh widget / chat switch: agent state unknown
+    const r = record();
+    announceAgent(false); // the chat's first idle report on mount
+    r.stop();
+    expect(isHeld()).toBe(false);
+    expect(r.seen).toEqual([{ busy: false }]);
+  });
+
+  it("leaving a chat mid-run hands the page back without a hold", () => {
+    holdStore.setEnabled(true);
+    announceAgent(true);
+    const r = record();
+    resetAgent(); // unmount while the agent was busy
+    announceAgent(false); // the next chat mounts idle
+    r.stop();
+    expect(isHeld()).toBe(false);
+    expect(r.seen).toEqual([{ busy: false }, { busy: false }]);
   });
 
   it("is off by default: a finished run releases the page at once", () => {

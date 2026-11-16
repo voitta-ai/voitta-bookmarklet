@@ -116,6 +116,7 @@ export function releaseHold(): void {
  *  idle event becomes { busy: true, held: true } until `releaseHold()`. */
 export function announceAgent(busy: boolean): void {
   if (busy === agentBusy) return;
+  const wasBusy = agentBusy === true;
   agentBusy = busy;
   if (busy) {
     if (held) {
@@ -130,13 +131,30 @@ export function announceAgent(busy: boolean): void {
     dispatch({ busy: false, stopped: true });
     return;
   }
-  if (snap.enabled) {
+  // Hold only after a turn that actually ran here. The first idle report (the widget
+  // loading, a chat switch, a reconnect) starts from "unknown", not from a finished run.
+  if (snap.enabled && wasBusy) {
     held = true;
     changed();
     dispatch({ busy: true, held: true });
     return;
   }
   dispatch({ busy: false });
+}
+
+/** The chat is going away (unmount, chat switch): hand the page back as plain idle and
+ *  forget the agent state, so the next chat starts from "unknown" — never from a finished run. */
+export function resetAgent(): void {
+  const was = agentBusy;
+  agentBusy = null;
+  stopping = false;
+  if (held) {
+    held = false;
+    changed();
+    dispatch({ busy: false, released: true });
+  } else if (was === true) {
+    dispatch({ busy: false });
+  }
 }
 
 /** The user pressed Stop. The page gets `{ busy: false, stopped: true }` when the
