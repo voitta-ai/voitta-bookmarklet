@@ -23,6 +23,9 @@ import { encodeFiles } from "./lib/attachments";
 import { useAuthConnect } from "./lib/useAuthConnect";
 import { useRoutineScheduler } from "./lib/useRoutineScheduler";
 import { announceAgent, markStopped } from "./lib/pageClock";
+
+// How long the agent must look idle before the page is told (see the announce effect).
+const IDLE_SETTLE_MS = 1_500;
 import { setChatHandle } from "./lib/notices";
 
 // One row of /api/agent_sdk/sessions/{id}/messages (see
@@ -227,9 +230,16 @@ export default function ChatPane({
 
   // Tell the host page while the agent works (a turn, or a question waiting for
   // the user), so a page that runs its own clock can pause it. See pageClock.ts.
+  // Busy is announced at once; idle only once it has held for IDLE_SETTLE_MS, so the
+  // short gaps inside one turn (an answered question before the turn is marked running
+  // again, a reconnect) don't let the page resume and pause again mid-turn.
   const agentBusy = busy || !!askUser;
+  const idleTimer = useRef<number>(0);
   useEffect(() => {
-    announceAgent(agentBusy);
+    window.clearTimeout(idleTimer.current);
+    if (agentBusy) announceAgent(true);
+    else idleTimer.current = window.setTimeout(() => announceAgent(false), IDLE_SETTLE_MS);
+    return () => window.clearTimeout(idleTimer.current);
   }, [agentBusy]);
   useEffect(() => () => announceAgent(false), []);
 

@@ -248,3 +248,35 @@ async def test_bridge_uses_spec_timeout_over_the_default(monkeypatch: pytest.Mon
     finally:
         registry._tools.clear()
         registry._tools.update(saved)
+
+
+# -- the turn keeps running after the answer --------------------------------------
+
+class _Emitter:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    async def task_start(self) -> None:
+        self.calls.append("task_start")
+
+
+class _ClCtx:
+    def __init__(self) -> None:
+        self.emitter = _Emitter()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reply", [
+    {"answers": {"Which approach?": "A"}},       # picked
+    {"response": "do C"},                        # typed
+    {"cancelled": True},                         # dismissed
+    None,                                        # timed out
+])
+async def test_turn_is_marked_running_again_after_the_ask(reply: Any) -> None:
+    """Chainlit's send_ask_user ends the task once the user answers and never restarts it; the UI
+    would then treat the rest of the turn as idle (Send unlocked, voitta:agent idle → a paused page
+    simulation resumes mid-turn). The tool restarts it, whatever the outcome."""
+    _FakeAsk.reply = reply
+    cl = _ClCtx()
+    await ask_user._handler({"questions": Q}, _ctx(**{ask_user._K_CTX: cl}))
+    assert cl.emitter.calls == ["task_start"]
