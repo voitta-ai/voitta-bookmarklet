@@ -11,8 +11,10 @@
 //     window.dispatchEvent(new CustomEvent("voitta:agent", { detail: { busy: true | false } }))
 //
 // busy=true while a turn runs or a question waits for the user, so such a page
-// can pause itself for the duration of the agent's response. Both are optional
-// and generic: pages that know nothing about them behave exactly as before.
+// can pause itself for the duration of the agent's response. When the user
+// presses Stop, the idle event carries stopped: true (the page should stay paused).
+// Both are optional and generic: pages that know nothing about them behave exactly
+// as before.
 
 export interface Clock {
   now: number; // epoch ms on this clock
@@ -42,13 +44,33 @@ export function readClock(): Clock {
 }
 
 let lastBusy: boolean | null = null;
+let stopping = false;
 
-/** Tell the page whether the agent is working. Repeats are dropped. */
+/** Tell the page whether the agent is working. Repeats are dropped. The idle
+ *  event that follows `markStopped()` carries `stopped: true`. */
 export function announceAgent(busy: boolean): void {
   if (busy === lastBusy) return;
   lastBusy = busy;
+  const detail: { busy: boolean; stopped?: boolean } = { busy };
+  if (!busy && stopping) detail.stopped = true;
+  if (!busy) stopping = false;
   try {
-    window.dispatchEvent(new CustomEvent("voitta:agent", { detail: { busy } }));
+    window.dispatchEvent(new CustomEvent("voitta:agent", { detail }));
+  } catch {
+    /* no window (tests) */
+  }
+}
+
+/** The user pressed Stop. The page gets `{ busy: false, stopped: true }` when the
+ *  turn has ended (immediately if nothing was running), so a simulation that paused
+ *  for the agent can stay stopped instead of resuming. */
+export function markStopped(): void {
+  if (lastBusy === true) {
+    stopping = true;
+    return;
+  }
+  try {
+    window.dispatchEvent(new CustomEvent("voitta:agent", { detail: { busy: false, stopped: true } }));
   } catch {
     /* no window (tests) */
   }

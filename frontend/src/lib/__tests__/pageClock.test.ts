@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from "vitest";
-import { announceAgent, readClock } from "../pageClock";
+import { announceAgent, markStopped, readClock } from "../pageClock";
 
 const w = window as unknown as { voittaPageClock?: unknown };
 
@@ -39,5 +39,23 @@ describe("announceAgent", () => {
     announceAgent(false);
     window.removeEventListener("voitta:agent", on);
     expect(seen).toEqual([true, false]);
+  });
+});
+
+describe("agent events", () => {
+  it("marks the idle event after a manual stop, once", () => {
+    const seen: unknown[] = [];
+    const on = (e: Event) => seen.push((e as CustomEvent).detail);
+    window.addEventListener("voitta:agent", on);
+    announceAgent(true);
+    markStopped();
+    announceAgent(false);
+    announceAgent(true);
+    announceAgent(false);
+    markStopped(); // nothing running: reported at once
+    window.removeEventListener("voitta:agent", on);
+    expect(seen).toEqual([
+      { busy: true }, { busy: false, stopped: true }, { busy: true }, { busy: false }, { busy: false, stopped: true },
+    ]);
   });
 });

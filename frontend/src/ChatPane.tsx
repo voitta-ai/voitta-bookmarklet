@@ -22,7 +22,7 @@ import type { ImageAttachment } from "./lib/image-attach";
 import { encodeFiles } from "./lib/attachments";
 import { useAuthConnect } from "./lib/useAuthConnect";
 import { useRoutineScheduler } from "./lib/useRoutineScheduler";
-import { announceAgent } from "./lib/pageClock";
+import { announceAgent, markStopped } from "./lib/pageClock";
 import { setChatHandle } from "./lib/notices";
 
 // One row of /api/agent_sdk/sessions/{id}/messages (see
@@ -315,7 +315,10 @@ export default function ChatPane({
         onAttach={onAttach}
         onRemoveAttachment={onRemoveAttachment}
         onSend={onSend}
-        onStop={() => stopTask()}
+        onStop={() => {
+          markStopped();
+          stopTask();
+        }}
       />
     </div>
   );
