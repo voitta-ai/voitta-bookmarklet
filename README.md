@@ -127,6 +127,15 @@ mkdir -p backend/certs && (cd backend/certs && \
 Data defaults to `~/Library/Application Support/Voitta Bookmarklet/backend`. Set
 `VOITTA_DATA_ROOT` to put it elsewhere.
 
+On macOS, `./launchd.sh install` keeps the server running. It registers a per-user
+LaunchAgent that starts `./start.sh` at login and restarts it if it exits. If a
+`./start.sh` you started by hand still holds port 12358 or 12359, `install` refuses
+and names its pid. The job gets launchd's environment (`launchctl setenv`), not
+your shell's. Logs go to `~/Library/Logs/voitta-bookmarklet/server.log`.
+`./launchd.sh status` shows the job and `./launchd.sh uninstall` removes it. The
+agent points at this checkout, so uninstall it before you move or delete the
+checkout.
+
 ### macOS menu-bar app
 
 `./tray.sh` runs the same backend from a menu-bar icon. The menu has About,

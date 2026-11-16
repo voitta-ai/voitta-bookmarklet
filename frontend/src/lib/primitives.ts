@@ -480,6 +480,51 @@ async function getPageDump(): Promise<unknown> {
   };
 }
 
+// read_page returns at most this many characters: the agent loop cuts a tool
+// result at 32,000 (MAX_TOOL_RESULT_BYTES in backend/app/agent.py).
+const READ_PAGE_MAX_CHARS = 20_000;
+
+function readPage(args: Record<string, unknown>): unknown {
+  // Read the page through DOM APIs only, for pages whose CSP forbids eval
+  // (eval_js cannot run there). A selector is data, not code. An invalid one
+  // throws, and CallFnRouter returns the message to the caller.
+  // shortcut: light DOM of this document only, walk open shadow roots and
+  // same-origin frames when a site needs them.
+  const selector = typeof args?.selector === "string" ? args.selector.trim() : "";
+  const format = args?.format === "html" ? "html" : "text";
+  const nodes: Element[] = selector
+    ? Array.from(document.querySelectorAll(selector))
+    : [document.body ?? document.documentElement];
+  const items: string[] = [];
+  let room = READ_PAGE_MAX_CHARS;
+  let truncated = false;
+  for (const node of nodes) {
+    if (room <= 0) {
+      truncated = true;
+      break;
+    }
+    // innerText is undefined on SVG elements.
+    const content = format === "html"
+      ? node.outerHTML
+      : (node as HTMLElement).innerText ?? node.textContent ?? "";
+    truncated = content.length > room;
+    items.push(truncated ? content.slice(0, room) : content);
+    room -= content.length;
+  }
+  // items goes last: if the agent loop cuts the result, it cuts content, not these fields.
+  const retval = {
+    ok: true,
+    url: location.href,
+    title: document.title,
+    format,
+    selector: selector || null,
+    matches: nodes.length,
+    truncated,
+    items,
+  };
+  return retval;
+}
+
 async function evalJs(args: Record<string, unknown>): Promise<unknown> {
   // Evaluate arbitrary JS in the bookmarklet's page context. Wraps the
   // body in an AsyncFunction so ``await`` at top level works and
@@ -560,6 +605,7 @@ export const primitives: Record<string, Primitive> = {
   get_page_title: () => ({ title: document.title }),
   screenshot_report: (args) => screenshotReport(args),
   get_page_dump: () => getPageDump(),
+  read_page: (args) => readPage(args),
   eval_js: (args) => evalJs(args),
   // Devtools capture — install interceptors then poll for data via MCP.
   install_devtools_capture: () => installDevtoolsCapture(),

@@ -111,27 +111,58 @@ jobs:
   # Runs only when this push created a release. A separate workflow on the
   # `release` event would never fire: releases made with GITHUB_TOKEN do not
   # trigger other workflows.
+  #
+  # Docker's reusable workflow builds each platform on its own native runner,
+  # so nothing runs under emulation, and pushes one multi-platform image under
+  # the version tag. It does not push :latest; the next job decides that.
   docker-image:
     needs: tag-and-release
     if: needs.tag-and-release.outputs.released == 'true'
+    uses: docker/github-builder/.github/workflows/build.yml@v1
+    permissions:
+      contents: read
+      packages: write
+      id-token: write # the reusable workflow signs the image's attestations
+    with:
+      output: image
+      push: true
+      platforms: linux/amd64,linux/arm64
+      meta-images: ghcr.io/${{ github.repository }}
+      meta-tags: type=raw,value=${{ needs.tag-and-release.outputs.version }}
+      meta-flavor: latest=false
+    secrets:
+      registry-auths: |
+        - registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+  # The builds of releases cut close together overlap. Only the newest release
+  # may take :latest; otherwise an older build that finishes late moves the tag
+  # back.
+  latest-tag:
+    needs: [tag-and-release, docker-image]
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
     steps:
       - uses: actions/checkout@v4
-      - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ github.token }}
-      - uses: docker/build-push-action@v6
-        with:
-          context: .
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: |
-            ghcr.io/${{ github.repository }}:${{ needs.tag-and-release.outputs.version }}
-            ghcr.io/${{ github.repository }}:latest
+      - name: Move latest to this version if it is the newest release
+        env:
+          IMAGE: ghcr.io/${{ github.repository }}
+          VERSION: ${{ needs.tag-and-release.outputs.version }}
+        run: |
+          set -euo pipefail
+          newest=$(git ls-remote --tags --refs origin 'v*' \
+            | sed 's#.*refs/tags/v##' | grep -E '^[0-9]+(\.[0-9]+)+$' | sort -V | tail -1)
+          if [ "$newest" = "$VERSION" ]; then
+            docker buildx imagetools create --tag "$IMAGE:latest" "$IMAGE:$VERSION"
+          else
+            echo "::notice::v$newest is newer than v$VERSION; :latest is left alone."
+          fi

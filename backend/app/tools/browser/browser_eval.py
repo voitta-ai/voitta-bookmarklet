@@ -39,7 +39,12 @@ async def _handler(args: dict[str, Any], ctx: ToolCtx) -> dict[str, Any]:
             "eval_js", {"js": js, "await_ms": await_ms}, ctx, timeout_ms=await_ms + 5_000,
         )
     except BrowserToolError as exc:
-        return {"ok": False, "error": exc.kind, "message": str(exc)}
+        # call_browser keeps a thrown script's envelope {ok, error, message, stack, logs, ms}
+        # in details and puts only its bare code in str(exc); pass the envelope on whole.
+        retval = {"ok": False, "error": exc.kind, "message": str(exc)}
+        if isinstance(exc.details, dict):
+            retval = exc.details
+        return retval
     return result
 
 
@@ -68,6 +73,10 @@ registry.register(
             "Returns on success: {ok: true, result, logs: [{level, args}], ms}\n"
             "Returns on script throw: {ok: false, error: 'eval_threw', message, stack, logs, ms}\n"
             "Returns on transport failure: {ok: false, error: <kind>, message}\n"
+            "\n"
+            "If the message is an EvalError that names Content Security Policy or "
+            "'unsafe-eval', the page forbids eval and no script will run there: "
+            "use read_page instead.\n"
             "\n"
             "Use this tool when no narrower plugin-provided primitive exists. "
             "When a purpose-built tool (e.g. linkedin_read_profile, ebay_scrape_search) "

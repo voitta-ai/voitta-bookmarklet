@@ -91,6 +91,8 @@ async def call_browser(
       treated as a structured failure and re-raised as
       ``BrowserToolError`` so the wrapping tool handler can surface
       it to the model uniformly.
+    * The widget in the tab has no such primitive (kind ``stale_widget``):
+      the page loaded its widget before the backend was updated.
     """
     transport = ctx.browser or _CHAINLIT
     res = await transport.call(name, args or {}, timeout_ms)
@@ -100,6 +102,17 @@ async def call_browser(
     # callers don't need two code paths.
     if isinstance(res, dict) and res.get("error") and not res.get("ok", False):
         err = res.get("error")
+        if err == f"unknown browser tool {name}":
+            # CallFnRouter's answer when the widget in the tab has no such primitive.
+            # Without this the model reads it as the site blocking the tool.
+            raise BrowserToolError(
+                "stale_widget",
+                "The Voitta widget in this tab does not have the browser side of this tool "
+                f"({name!r}). It was most likely loaded before the backend was updated. The "
+                "site is not blocking it: ask the user to reload the page and click the Voitta "
+                "bookmarklet again, then retry. Clicking the bookmarklet without a reload "
+                "keeps the old widget.",
+            )
         kind = "primitive_error"
         message = str(err) if not isinstance(err, dict) else str(err.get("message") or err)
         details: Any = res
