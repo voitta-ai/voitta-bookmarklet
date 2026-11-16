@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it } from "vitest";
-import { announceAgent, markStopped, readClock } from "../pageClock";
+import { announceAgent, holdStore, isHeld, markStopped, readClock, releaseHold } from "../pageClock";
 
 const w = window as unknown as { voittaPageClock?: unknown };
 
@@ -57,5 +57,84 @@ describe("agent events", () => {
     expect(seen).toEqual([
       { busy: true }, { busy: false, stopped: true }, { busy: true }, { busy: false }, { busy: false, stopped: true },
     ]);
+  });
+});
+
+describe("hold after each run", () => {
+  const record = () => {
+    const seen: unknown[] = [];
+    const on = (e: Event) => seen.push((e as CustomEvent).detail);
+    window.addEventListener("voitta:agent", on);
+    return { seen, stop: () => window.removeEventListener("voitta:agent", on) };
+  };
+
+  afterEach(() => {
+    holdStore.setEnabled(false);
+    announceAgent(false);
+  });
+
+  it("is off by default: a finished run releases the page at once", () => {
+    expect(holdStore.get().enabled).toBe(false);
+    const r = record();
+    announceAgent(true);
+    announceAgent(false);
+    r.stop();
+    expect(r.seen).toEqual([{ busy: true }, { busy: false }]);
+    expect(isHeld()).toBe(false);
+  });
+
+  it("keeps the page paused after a run until the user releases it", () => {
+    holdStore.setEnabled(true);
+    const r = record();
+    announceAgent(true);
+    announceAgent(false);
+    announceAgent(false); // repeats (the idle debounce) change nothing
+    expect(isHeld()).toBe(true);
+    expect(holdStore.get().held).toBe(true);
+    releaseHold();
+    releaseHold(); // once only
+    r.stop();
+    expect(r.seen).toEqual([{ busy: true }, { busy: true, held: true }, { busy: false, released: true }]);
+    expect(isHeld()).toBe(false);
+  });
+
+  it("a new turn while held starts normally and ends in a new hold", () => {
+    holdStore.setEnabled(true);
+    announceAgent(true);
+    announceAgent(false);
+    const r = record();
+    announceAgent(true);
+    expect(isHeld()).toBe(false);
+    announceAgent(false);
+    r.stop();
+    expect(r.seen).toEqual([{ busy: true }, { busy: true, held: true }]);
+    expect(isHeld()).toBe(true);
+  });
+
+  it("Stop and the page's own resume both drop the hold", () => {
+    holdStore.setEnabled(true);
+    announceAgent(true);
+    announceAgent(false);
+    const r = record();
+    markStopped();
+    expect(isHeld()).toBe(false);
+    announceAgent(true);
+    announceAgent(false);
+    expect(isHeld()).toBe(true);
+    window.dispatchEvent(new CustomEvent("voitta:release"));
+    r.stop();
+    expect(isHeld()).toBe(false);
+    expect(r.seen).toEqual([{ busy: false, stopped: true }, { busy: true }, { busy: true, held: true }]);
+  });
+
+  it("turning the toggle off while held releases the page", () => {
+    holdStore.setEnabled(true);
+    announceAgent(true);
+    announceAgent(false);
+    const r = record();
+    holdStore.setEnabled(false);
+    r.stop();
+    expect(isHeld()).toBe(false);
+    expect(r.seen).toEqual([{ busy: false, released: true }]);
   });
 });

@@ -2,8 +2,8 @@
 // (and again after every chat switch — ChatPane's scheduler disarms on
 // remount). The scheduler itself lives in ChatPane; this only arms + shows.
 
-import { readClock } from "./lib/pageClock";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { holdStore, readClock } from "./lib/pageClock";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import {
   type LogEntry,
   type Outcome,
@@ -60,6 +60,7 @@ function snippet(s: string, n = 34) {
 
 export default function AlarmClock({ backendOrigin, onEditRoutines }: Props) {
   const st = useAlarm();
+  const hold = useSyncExternalStore(holdStore.subscribe, holdStore.get);
   const [open, setOpen] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [now, setNow] = useState(() => readClock().now);
@@ -180,6 +181,22 @@ export default function AlarmClock({ backendOrigin, onEditRoutines }: Props) {
               disabled={!picked}
               title={armed ? "Disarm" : "Arm"}
               onClick={toggle}
+            >
+              <span />
+            </button>
+          </div>
+          <div className="alarm-row alarm-hold">
+            <span className="alarm-hold-text">
+              <span className="alarm-hold-title">Hold after each run</span>
+              <span className="alarm-hint">The page stays paused until you release it</span>
+            </span>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={hold.enabled}
+              className={`alarm-switch${hold.enabled ? " on" : ""}`}
+              title={hold.enabled ? "Release control after each run" : "Hold control after each run"}
+              onClick={() => holdStore.setEnabled(!hold.enabled)}
             >
               <span />
             </button>

@@ -12,7 +12,7 @@ import {
   useChatInteract,
   useChatMessages,
 } from "@chainlit/react-client";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useRecoilValue, useSetRecoilState } from "recoil";
 import MessageList from "./chat/MessageList";
 import Composer from "./chat/Composer";
@@ -22,11 +22,13 @@ import type { ImageAttachment } from "./lib/image-attach";
 import { encodeFiles } from "./lib/attachments";
 import { useAuthConnect } from "./lib/useAuthConnect";
 import { useRoutineScheduler } from "./lib/useRoutineScheduler";
-import { announceAgent, markStopped } from "./lib/pageClock";
+import { announceAgent, holdStore, markStopped, releaseHold } from "./lib/pageClock";
+import { clearNotice, setChatHandle, showNotice } from "./lib/notices";
 
 // How long the agent must look idle before the page is told (see the announce effect).
 const IDLE_SETTLE_MS = 1_500;
-import { setChatHandle } from "./lib/notices";
+// The banner that asks the user to release a held page ("Hold after each run").
+const HOLD_NOTICE = "voitta.hold";
 
 // One row of /api/agent_sdk/sessions/{id}/messages (see
 // backend/app/services/agent_sdk/sessions.py:_transcript_rows).
@@ -241,7 +243,31 @@ export default function ChatPane({
     else idleTimer.current = window.setTimeout(() => announceAgent(false), IDLE_SETTLE_MS);
     return () => window.clearTimeout(idleTimer.current);
   }, [agentBusy]);
-  useEffect(() => () => announceAgent(false), []);
+  // Leaving the chat hands the page back, held or not.
+  useEffect(() => () => {
+    announceAgent(false);
+    releaseHold();
+    clearNotice(HOLD_NOTICE);
+  }, []);
+
+  // "Hold after each run" (alarm popover): after a turn the page stays paused until
+  // the user releases it here (or resumes the page itself, which drops the hold).
+  const hold = useSyncExternalStore(holdStore.subscribe, holdStore.get);
+  useEffect(() => {
+    if (!hold.held) {
+      clearNotice(HOLD_NOTICE);
+      return;
+    }
+    showNotice({
+      id: HOLD_NOTICE,
+      source: "voitta",
+      level: "info",
+      text: "Paused after the agent's run",
+      detail: "The page waits for you. Release to hand control back.",
+      dismissible: false,
+      actions: [{ label: "Release ▶", primary: true, run: () => releaseHold() }],
+    });
+  }, [hold.held]);
 
   // Let notice buttons (plugin banners) send a message as the user while
   // this chat is idle. A pending question counts as busy: a new message

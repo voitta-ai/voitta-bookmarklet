@@ -7,7 +7,7 @@
 // pageClock.ts: e.g. a market simulator at 390×), otherwise on the real clock.
 
 import { useEffect, useRef } from "react";
-import { announceAgent, readClock } from "./pageClock";
+import { announceAgent, isHeld, readClock } from "./pageClock";
 import { alarmStore, chimeMessage, claimSlot, planTick, slotsBetween, STALE_MS } from "./routines";
 
 const TICK_MS = 10_000;
@@ -70,7 +70,8 @@ export function useRoutineScheduler(opts: Opts) {
         if (!due.length) return clock.page;
 
         const o = latest.current;
-        const busy = o.busy || Date.now() - sentAt.current < SEND_GRACE_MS;
+        // A hold (the user has not released the last run yet) counts as busy: no chime on top of it.
+        const busy = o.busy || isHeld() || Date.now() - sentAt.current < SEND_GRACE_MS;
         const plan = planTick(due, now, busy, o.asking, STALE_MS * Math.max(1, clock.rate));
         for (const m of plan.missed) alarmStore.record({ at: m.slot.at, chimeId: m.slot.chime.id, outcome: m.outcome });
         const slot = plan.candidate;

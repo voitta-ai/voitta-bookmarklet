@@ -13,8 +13,11 @@
 // busy=true while a turn runs or a question waits for the user, so such a page
 // can pause itself for the duration of the agent's response. When the user
 // presses Stop, the idle event carries stopped: true (the page should stay paused).
-// Both are optional and generic: pages that know nothing about them behave exactly
-// as before.
+// With "hold after each run" on, a finished turn sends { busy: true, held: true }
+// instead of idle, and { busy: false, released: true } when the user releases it.
+// A page that resumes on its own (its own ▶) dispatches "voitta:release" so the
+// widget drops the hold. All of it is optional and generic: pages that know
+// nothing about it behave exactly as before.
 
 export interface Clock {
   now: number; // epoch ms on this clock
@@ -43,17 +46,34 @@ export function readClock(): Clock {
   return { now: Date.now(), rate: 1, page: false };
 }
 
-let lastBusy: boolean | null = null;
+let agentBusy: boolean | null = null; // the agent itself, not what the page was told
 let stopping = false;
 
-/** Tell the page whether the agent is working. Repeats are dropped. The idle
- *  event that follows `markStopped()` carries `stopped: true`. */
-export function announceAgent(busy: boolean): void {
-  if (busy === lastBusy) return;
-  lastBusy = busy;
-  const detail: { busy: boolean; stopped?: boolean } = { busy };
-  if (!busy && stopping) detail.stopped = true;
-  if (!busy) stopping = false;
+// ---- hold after each run --------------------------------------------------------------
+// With "hold" on, the end of a turn does not release the page: it gets
+// { busy: true, held: true } and stays paused until the user releases control
+// (the Release button, or the page itself sending voitta:release, e.g. ▶ in its
+// own clock). Off by default; a preference kept in localStorage.
+
+const HOLD_KEY = "voitta.holdAfterRun";
+let held = false;
+const listeners = new Set<() => void>();
+let snap = { enabled: readHoldPref(), held: false };
+
+function readHoldPref(): boolean {
+  try {
+    return localStorage.getItem(HOLD_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function changed(): void {
+  snap = { enabled: snap.enabled, held };
+  listeners.forEach((f) => f());
+}
+
+function dispatch(detail: Record<string, boolean>): void {
   try {
     window.dispatchEvent(new CustomEvent("voitta:agent", { detail }));
   } catch {
@@ -61,17 +81,86 @@ export function announceAgent(busy: boolean): void {
   }
 }
 
+export const holdStore = {
+  get: () => snap,
+  subscribe(f: () => void): () => void {
+    listeners.add(f);
+    return () => listeners.delete(f);
+  },
+  setEnabled(on: boolean): void {
+    try {
+      localStorage.setItem(HOLD_KEY, on ? "1" : "0");
+    } catch {
+      /* private mode */
+    }
+    snap = { enabled: on, held };
+    if (!on && held) releaseHold();
+    else changed();
+  },
+};
+
+export function isHeld(): boolean {
+  return held;
+}
+
+/** Hand control back: the page gets { busy: false, released: true } and may resume. */
+export function releaseHold(): void {
+  if (!held) return;
+  held = false;
+  changed();
+  dispatch({ busy: false, released: true });
+}
+
+/** Tell the page whether the agent is working. Repeats are dropped. The idle
+ *  event that follows `markStopped()` carries `stopped: true`; with hold on, the
+ *  idle event becomes { busy: true, held: true } until `releaseHold()`. */
+export function announceAgent(busy: boolean): void {
+  if (busy === agentBusy) return;
+  agentBusy = busy;
+  if (busy) {
+    if (held) {
+      held = false; // the user started another turn: it ends in a new hold (if still on)
+      changed();
+    }
+    dispatch({ busy: true });
+    return;
+  }
+  if (stopping) {
+    stopping = false;
+    dispatch({ busy: false, stopped: true });
+    return;
+  }
+  if (snap.enabled) {
+    held = true;
+    changed();
+    dispatch({ busy: true, held: true });
+    return;
+  }
+  dispatch({ busy: false });
+}
+
 /** The user pressed Stop. The page gets `{ busy: false, stopped: true }` when the
  *  turn has ended (immediately if nothing was running), so a simulation that paused
- *  for the agent can stay stopped instead of resuming. */
+ *  for the agent can stay stopped instead of resuming. Stop never leaves a hold. */
 export function markStopped(): void {
-  if (lastBusy === true) {
+  if (agentBusy === true) {
     stopping = true;
     return;
   }
-  try {
-    window.dispatchEvent(new CustomEvent("voitta:agent", { detail: { busy: false, stopped: true } }));
-  } catch {
-    /* no window (tests) */
+  if (held) {
+    held = false;
+    changed();
   }
+  dispatch({ busy: false, stopped: true });
+}
+
+// The page took control back itself (e.g. ▶ in its own clock): drop the hold quietly.
+try {
+  window.addEventListener("voitta:release", () => {
+    if (!held) return;
+    held = false;
+    changed();
+  });
+} catch {
+  /* no window (tests) */
 }
