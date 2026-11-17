@@ -127,6 +127,9 @@ jobs:
       output: image
       push: true
       platforms: linux/amd64,linux/arm64
+      # Layers are kept in the GitHub Actions cache, one scope per platform.
+      # The dependency layer is reused until backend/pyproject.toml changes.
+      cache: true
       meta-images: ghcr.io/${{ github.repository }}
       meta-tags: type=raw,value=${{ needs.tag-and-release.outputs.version }}
       meta-flavor: latest=false
