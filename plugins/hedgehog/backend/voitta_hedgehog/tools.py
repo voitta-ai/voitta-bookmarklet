@@ -602,7 +602,14 @@ async def _rewards(args: dict[str, Any], ctx: ToolCtx) -> dict[str, Any]:
         if not username:
             return fail("bad_args", "username required (hedgehog_page_context returns it)")
         if section == "my_week":
-            return {"ok": True, **await rewards.my_week(int(args.get("week_id") or 0), username)}
+            week_id = int(args.get("week_id") or 0)
+            if not week_id:  # default: the latest reward week (ids start at 1; there is no week 0)
+                listed = await rewards.weeks(1)
+                rows = listed.get("weeks", listed) if isinstance(listed, dict) else listed
+                week_id = int((rows[0] if rows else {}).get("id") or 0)
+                if not week_id:
+                    return fail("not_found", "No reward weeks yet.")
+            return {"ok": True, **await rewards.my_week(week_id, username)}
         return {"ok": True, **await rewards.my_standing(username)}
     except Exception as exc:  # network / upstream
         return fail("rewards_api_error", f"{type(exc).__name__}: {exc}")
