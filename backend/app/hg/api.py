@@ -453,8 +453,19 @@ async def v1_rank(request: Request):
 @app.get("/v1/rewards/{section}", tags=["game"], summary="Hedgehog Camp H-Token rewards.")
 async def v1_rewards(request: Request, section: Literal["my_standing", "my_week", "weeks", "config"],
                      username: str | None = None, week_id: int | None = None, limit: int | None = None):
-    return await _tool(request, "hedgehog_rewards", _clean({"section": section, "username": username,
-                                                             "week_id": week_id, "limit": limit}))
+    row = _key_row(request)
+    if row is None:
+        return _err("unauthorized", _UNAUTH)
+    if not username and section in ("my_standing", "my_week"):
+        # Default to the StockTrak user signed in in this key's tab, so clients don't need to know it.
+        ctx = await runner.run(row, "hedgehog_page_context", {}, via="rest")
+        username = ctx.get("username") if ctx.get("ok") is not False else None
+        if not username:
+            return _err(str(ctx.get("error") or "bad_args"),
+                        str(ctx.get("message") or "Couldn't tell which StockTrak user is signed in; pass ?username=."))
+    return _from_tool(await runner.run(row, "hedgehog_rewards", _clean({"section": section, "username": username,
+                                                                         "week_id": week_id, "limit": limit}),
+                                       via="rest"))
 
 
 # ── landing ──────────────────────────────────────────────────────────────
