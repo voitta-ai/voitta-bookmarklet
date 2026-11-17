@@ -103,6 +103,17 @@ svg.anim *{animation-iteration-count:infinite;animation-fill-mode:both;animation
 .a-drag .ins{animation-name:dIns;opacity:0} @keyframes dIns{0%,40%{opacity:0}44%,57%{opacity:1}59%,100%{opacity:0}}
 .a-drag .new{animation-name:dNew} @keyframes dNew{0%,57%{opacity:0}59%,100%{opacity:1}}
 .a-drag .glow{animation-name:dGlow;opacity:0} @keyframes dGlow{0%,57%{opacity:0}60%{opacity:1}82%,100%{opacity:0}}
+/* 1b open the panel on StockTrak: 8s */
+.a-open *{animation-duration:8s}
+.a-open .cur{animation-name:oCur;transform:translate(330px,215px)}
+@keyframes oCur{0%{transform:translate(200px,212px);animation-timing-function:ease-in-out}12%,48%{transform:translate(140px,58px);animation-timing-function:ease-in-out}
+ 61%,74%{transform:translate(397px,141px);animation-timing-function:ease-in-out}88%,100%{transform:translate(330px,215px)}}
+.a-open .press{animation-name:oPress;opacity:0} @keyframes oPress{0%,14%{opacity:0}15%,19%{opacity:1}20%,100%{opacity:0}}
+.a-open .pnl{animation-name:oPnl} @keyframes oPnl{0%,19%{transform:translateX(170px);animation-timing-function:cubic-bezier(.2,.8,.2,1)}28%,100%{transform:translateX(0)}}
+.a-open .wait{animation-name:oWait;opacity:0} @keyframes oWait{0%,41%{opacity:1}43%,100%{opacity:0}}
+.a-open .okk{animation-name:oOk} @keyframes oOk{0%,41%{opacity:0}43%,100%{opacity:1}}
+.a-open .cp{animation-name:oCp;opacity:0} @keyframes oCp{0%,64%{opacity:0}65%,68%{opacity:1}69%,100%{opacity:0}}
+.a-open .toast{animation-name:oToast;opacity:0} @keyframes oToast{0%,66%{opacity:0}68%,86%{opacity:1}90%,100%{opacity:0}}
 /* 2 bookmark manager: 8.4s */
 .a-mgr *{animation-duration:8.4s}
 .a-mgr .cur{animation-name:mCur;transform:translate(330px,196px)}
@@ -182,7 +193,7 @@ svg.anim *{animation-iteration-count:infinite;animation-fill-mode:both;animation
 <header>
  <img src="/logo.png" alt="">
  <span class="name">Hedgehog API</span><span class="by">by Voitta</span>
- <nav><a href="#install">Install</a><a href="#connect">Connect</a><a href="#ref">Endpoints</a><a href="/docs">API reference</a></nav>
+ <nav><a href="#install">Install</a><a href="#open">Open</a><a href="#connect">Connect</a><a href="#ref">Endpoints</a><a href="/docs">API reference</a></nav>
 </header>
 
 <div class="hero">
@@ -311,9 +322,84 @@ svg.anim *{animation-iteration-count:infinite;animation-fill-mode:both;animation
  </div>
 </section>
 
+<!-- ─────────────── open the panel ─────────────── -->
+<section id="open">
+ <div class="sh"><span class="num">2</span><h2>Open the panel on StockTrak</h2><span class="sub">each time you want the API on</span></div>
+ <div class="grid">
+  <div>
+   <ol class="steps">
+    <li>Open <a href="https://app.stocktrak.com">app.stocktrak.com</a> and log in as usual.</li>
+    <li>Click <b>🦔 Hedgehog</b> in your bookmarks bar.</li>
+    <li>The Hedgehog panel slides in on the right and shows your API key. A green dot means it is connected.</li>
+   </ol>
+   <p class="note">The API works only while this tab is open and logged in. You can hide the panel with <b>–</b>; it keeps working, and a click on the bookmark brings it back.</p>
+   <p class="note">With the Enhanced bookmark, a small helper window opens first. Keep it open too.</p>
+  </div>
+  <div>
+   <svg class="anim a-open" viewBox="0 0 420 250" role="img" aria-label="On StockTrak, the Hedgehog bookmark is clicked and the Hedgehog panel slides in on the right, showing the API key.">
+    <rect width="420" height="250" rx="9" fill="#fff"/>
+    <path d="M0 9a9 9 0 0 1 9-9h402a9 9 0 0 1 9 9v19H0z" fill="#e6e9ee"/>
+    <use href="#lights" x="10" y="9" width="40" height="10"/>
+    <path d="M62 28v-14a6 6 0 0 1 6-6h112a6 6 0 0 1 6 6v14z" fill="#fff"/>
+    <circle cx="75" cy="18" r="4.5" fill="#2f9e5a"/><text x="85" y="21">StockTrak</text><text x="172" y="21" class="g">×</text><text x="194" y="22" class="g" style="font-size:12px">+</text>
+    <text x="11" y="43" class="g" style="font-size:12px">←</text><text x="28" y="43" class="g" style="font-size:12px">→</text><text x="45" y="43" class="g" style="font-size:12px">↻</text>
+    <rect x="64" y="32" width="318" height="16" rx="8" fill="#f1f3f5"/><text x="76" y="43.3" style="font-size:8.6px">app.stocktrak.com/portfolio</text><text x="401" y="44" class="g b" style="font-size:12px">⋮</text>
+    <circle cx="14" cy="59" r="4" fill="#2f9e5a"/><text x="21" y="62" style="font-size:8.4px">StockTrak</text>
+    <circle cx="72" cy="59" r="4" fill="#e8554e"/><text x="79" y="62" style="font-size:8.4px">Mail</text>
+    <rect class="press" x="113" y="51.5" width="64" height="15" rx="7.5" fill="#dfe3ea"/>
+    <image href="/logo.png" x="117" y="53.5" width="11" height="11"/><text x="131" y="62" style="font-size:8.4px">Hedgehog</text>
+    <line x1="0" y1="69.5" x2="420" y2="69.5" stroke="#e3e6ea"/>
+    <!-- the StockTrak page -->
+    <path d="M0 70h420v171a9 9 0 0 1-9 9H9a9 9 0 0 1-9-9z" fill="#f6f8fa"/>
+    <rect x="0" y="70" width="420" height="18" fill="#17324d"/>
+    <text x="12" y="82.5" class="w b" style="font-size:9.5px">StockTrak</text>
+    <text x="78" y="82.5" class="w" style="font-size:8px">Portfolio</text><text x="122" y="82.5" style="font-size:8px;fill:#9fb3c8">Trade</text><text x="154" y="82.5" style="font-size:8px;fill:#9fb3c8">Research</text><text x="200" y="82.5" style="font-size:8px;fill:#9fb3c8">Rankings</text>
+    <text x="14" y="104" class="b" style="font-size:10.5px">Portfolio summary</text>
+    <rect x="14" y="111" width="122" height="34" rx="5" fill="#fff" stroke="#e3e6ea"/><text x="22" y="123" class="g" style="font-size:7.4px">Portfolio value</text><text x="22" y="137" class="b" style="font-size:10.5px">$1,043,210</text>
+    <rect x="149" y="111" width="122" height="34" rx="5" fill="#fff" stroke="#e3e6ea"/><text x="157" y="123" class="g" style="font-size:7.4px">Buying power</text><text x="157" y="137" class="b" style="font-size:10.5px">$1,934,210</text>
+    <rect x="284" y="111" width="122" height="34" rx="5" fill="#fff" stroke="#e3e6ea"/><text x="292" y="123" class="g" style="font-size:7.4px">Cash</text><text x="292" y="137" class="b" style="font-size:10.5px">$412,880</text>
+    <rect x="14" y="155" width="392" height="84" rx="5" fill="#fff" stroke="#e3e6ea"/>
+    <text x="22" y="168" class="g" style="font-size:7.4px">Symbol</text><text x="92" y="168" class="g" style="font-size:7.4px">Quantity</text><text x="162" y="168" class="g" style="font-size:7.4px">Last price</text><text x="232" y="168" class="g" style="font-size:7.4px">Market value</text><text x="322" y="168" class="g" style="font-size:7.4px">Gain / loss</text>
+    <line x1="14" y1="173.5" x2="406" y2="173.5" stroke="#eef1f5"/>
+    <text x="22" y="186" class="b" style="font-size:8.4px">SPY</text><text x="92" y="186" style="font-size:8.4px">500</text><text x="162" y="186" style="font-size:8.4px">$601.20</text><text x="232" y="186" style="font-size:8.4px">$300,600</text><text x="322" y="186" style="font-size:8.4px;fill:#2f9e5a">+ $8,450</text>
+    <line x1="14" y1="192.5" x2="406" y2="192.5" stroke="#eef1f5"/>
+    <text x="22" y="205" class="b" style="font-size:8.4px">MSFT</text><text x="92" y="205" style="font-size:8.4px">400</text><text x="162" y="205" style="font-size:8.4px">$448.10</text><text x="232" y="205" style="font-size:8.4px">$179,240</text><text x="322" y="205" style="font-size:8.4px;fill:#2f9e5a">+ $3,120</text>
+    <line x1="14" y1="211.5" x2="406" y2="211.5" stroke="#eef1f5"/>
+    <text x="22" y="224" class="b" style="font-size:8.4px">AAPL</text><text x="92" y="224" style="font-size:8.4px">650</text><text x="162" y="224" style="font-size:8.4px">$232.75</text><text x="232" y="224" style="font-size:8.4px">$151,288</text><text x="322" y="224" style="font-size:8.4px;fill:#c0392b">− $1,905</text>
+    <!-- the Hedgehog panel -->
+    <g class="pnl">
+     <g class="sh0"><path d="M262 70h158v171a9 9 0 0 1-9 9H262z" fill="#0f1115"/></g>
+     <text x="270" y="84.5" class="b" style="font-size:8.6px;fill:#e6e6e8">🦔 Hedgehog API</text>
+     <circle class="okk" cx="354" cy="81.5" r="3" fill="#4ade80"/><circle class="wait" cx="354" cy="81.5" r="3" fill="#f5b942"/>
+     <rect x="366" y="75" width="30" height="13" rx="3.5" fill="none" stroke="#2a2f3a"/><text x="371" y="84" style="font-size:6.8px;fill:#e6e6e8">Docs ↗</text>
+     <rect x="400" y="75" width="13" height="13" rx="3.5" fill="none" stroke="#2a2f3a"/><text x="404" y="84" style="font-size:7px;fill:#e6e6e8">–</text>
+     <line x1="262" y1="93.5" x2="420" y2="93.5" stroke="#2a2f3a"/>
+     <rect x="269" y="99" width="144" height="20" rx="4" fill="#161922" stroke="#2a2f3a"/>
+     <text class="okk" x="276" y="111.5" style="font-size:7.2px;fill:#e6e6e8">API calls run in this tab. Keep it open.</text>
+     <text class="wait" x="276" y="111.5" style="font-size:7.2px;fill:#e6e6e8">Connecting to hg.voitta.ai…</text>
+     <text x="269" y="131" style="font-size:6.2px;fill:#8b93a3;letter-spacing:.5px">YOUR API KEY</text>
+     <rect x="269" y="135" width="84" height="15" rx="3.5" fill="#161922" stroke="#2a2f3a"/><text class="m" x="274" y="145.5" style="font-size:7px;fill:#e6e6e8">hgk_••••••••••••</text>
+     <rect x="357" y="135" width="26" height="15" rx="3.5" fill="#161922" stroke="#2a2f3a"/><text x="362" y="145.5" style="font-size:7px;fill:#e6e6e8">Show</text>
+     <rect x="386" y="135" width="27" height="15" rx="3.5" fill="#161922" stroke="#2a2f3a"/><rect class="cp" x="386" y="135" width="27" height="15" rx="3.5" fill="#3a4152"/><text x="391" y="145.5" style="font-size:7px;fill:#e6e6e8">Copy</text>
+     <text x="269" y="161" style="font-size:6.8px;fill:#8b93a3">Regenerate key</text>
+     <g class="toast"><rect x="350" y="153" width="63" height="13" rx="6.5" fill="#1f7a45"/><text x="359" y="162" class="w b" style="font-size:7px">✓ Key copied</text></g>
+     <text x="269" y="179" style="font-size:7.6px;fill:#e6e6e8">Allow trading</text><rect x="393" y="171" width="20" height="11" rx="5.5" fill="#f1f5f9"/><circle cx="407.5" cy="176.5" r="4.2" fill="#0f1115"/>
+     <text x="269" y="195" style="font-size:7.6px;fill:#e6e6e8">Keep session alive</text><rect x="393" y="187" width="20" height="11" rx="5.5" fill="#f1f5f9"/><circle cx="407.5" cy="192.5" r="4.2" fill="#0f1115"/>
+     <text x="269" y="212" style="font-size:6.2px;fill:#8b93a3;letter-spacing:.5px">CONNECT</text>
+     <rect x="269" y="217" width="49" height="13" rx="3.5" fill="#161922" stroke="#e6e6e8" stroke-width=".7"/><text x="273" y="226" style="font-size:6.6px;fill:#e6e6e8">Claude Code</text>
+     <rect x="321" y="217" width="58" height="13" rx="3.5" fill="none" stroke="#2a2f3a"/><text x="325" y="226" style="font-size:6.6px;fill:#8b93a3">Claude Desktop</text>
+     <rect x="382" y="217" width="25" height="13" rx="3.5" fill="none" stroke="#2a2f3a"/><text x="387" y="226" style="font-size:6.6px;fill:#8b93a3">REST</text>
+     <rect x="269" y="234" width="144" height="10" rx="3" fill="#161922" stroke="#2a2f3a"/>
+    </g>
+    <use class="cur" href="#cur" width="14" height="20"/>
+   </svg>
+  </div>
+ </div>
+</section>
+
 <!-- ─────────────── connect ─────────────── -->
 <section id="connect">
- <div class="sh"><span class="num">2</span><h2>Connect Claude and other tools</h2><span class="sub">your key is in the Hedgehog panel on StockTrak</span></div>
+ <div class="sh"><span class="num">3</span><h2>Connect Claude and other tools</h2><span class="sub">your key is in the Hedgehog panel on StockTrak</span></div>
  <div class="grid">
   <div>
    <div class="tabs" role="tablist" data-tabs="connect">
@@ -460,7 +546,7 @@ print(requests.post("{{BASE}}/v1/orders", headers=H, json=order).json())</pre></
 
 <!-- ─────────────── endpoints ─────────────── -->
 <section id="ref">
- <div class="sh"><span class="num">3</span><h2>What you can call</h2><span class="sub">send <code>Authorization: Bearer hgk_…</code> to <code>{{BASE}}</code></span></div>
+ <div class="sh"><span class="num">4</span><h2>What you can call</h2><span class="sub">send <code>Authorization: Bearer hgk_…</code> to <code>{{BASE}}</code></span></div>
  <div class="ref">
   <table><thead><tr><th>Call</th><th>What you get</th></tr></thead><tbody>
    <tr><td>GET /v1/status</td><td>Is your tab connected and logged in?</td></tr>
