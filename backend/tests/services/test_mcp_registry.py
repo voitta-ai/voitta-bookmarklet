@@ -64,8 +64,8 @@ def server(monkeypatch):
 
     page = cl_sessions.PageInfo(session_id="s1", host="example.com", url="https://example.com/x")
     monkeypatch.setattr(cl_sessions, "get", lambda sid: page if sid == "s1" else None)
-    monkeypatch.setattr(cl_sessions, "get_active_session", lambda: page)
-    monkeypatch.setattr(cl_sessions, "snapshot", lambda: [{
+    monkeypatch.setattr(cl_sessions, "get_active_session", lambda owner=None: page)
+    monkeypatch.setattr(cl_sessions, "snapshot", lambda owner=None: [{
         "session_id": "s1", "host": "example.com", "url": page.url, "title": "X",
         "connected": True, "last_seen": 1.0}])
 
@@ -149,7 +149,7 @@ async def test_invalid_arguments_never_reach_the_tool(server):
 async def test_page_tools_need_a_page(server, monkeypatch):
     from app.services import cl_sessions
 
-    monkeypatch.setattr(cl_sessions, "get_active_session", lambda: None)
+    monkeypatch.setattr(cl_sessions, "get_active_session", lambda owner=None: None)
     async with Client(server) as c:
         listed = _json(await c.call_tool("vb_list_tools", {}))
         res = await c.call_tool("vb_call_tool", {"name": "t_server_echo", "arguments": {"text": "x"}})

@@ -154,3 +154,9 @@ export function openApprove(backendOrigin: string): Promise<void> {
 export function openChangePassword(backendOrigin: string): Promise<void> {
   return popup(backendOrigin, "/auth/password", "voitta-password", (d) => d === "voitta-password-changed");
 }
+
+// API keys for Claude Code (MCP): created and shown on our own page, never
+// inside the host page (a key is a long-lived credential).
+export function openApiKeys(backendOrigin: string): Promise<void> {
+  return popup(backendOrigin, "/auth/keys", "voitta-keys", () => false);
+}

@@ -93,6 +93,8 @@ async def user_action(action: str, request: Request):
             users.disable(email, actor=me, ip=ip)
         elif action == "enable":
             users.enable(email, actor=me, ip=ip)
+        elif action == "revoke-keys":
+            out["revoked"] = users.revoke_all_keys(email, actor=me, ip=ip)
         else:
             return JSONResponse({"detail": f"Unknown action {action}."}, status_code=404)
     except users.UserError as exc:

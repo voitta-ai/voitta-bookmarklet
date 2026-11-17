@@ -107,18 +107,40 @@ def _live_session_ids() -> set[str]:
         return set()
 
 
-def get_active_session() -> PageInfo | None:
+def owner_of(session_id: str) -> str | None:
+    """The email a tab is signed in as (server mode), or None."""
+    try:
+        from chainlit.session import WebsocketSession
+
+        ws = WebsocketSession.get_by_id(session_id)
+    except Exception:
+        return None
+    user = getattr(ws, "user", None) if ws is not None else None
+    ident = getattr(user, "identifier", None) if user is not None else None
+    return str(ident).strip().lower() if ident else None
+
+
+def _mine(session_id: str, owner: str | None) -> bool:
+    return owner is None or owner_of(session_id) == owner.strip().lower()
+
+
+def get_active_session(owner: str | None = None) -> PageInfo | None:
     """The session voice input should go to: the last-focused session if
     its socket is still live, else the most recently seen live session,
-    else ``None``."""
+    else ``None``.
+
+    ``owner`` (server mode, an MCP API key's user): only that user's tabs —
+    their last-focused one, else their most recently seen."""
     live = _live_session_ids()
     if _last_focused is not None:
         sid, _ts = _last_focused
         info = _BY_ID.get(sid)
-        if info is not None and sid in live:
+        if info is not None and sid in live and _mine(sid, owner):
             return info
-    candidates = [i for i in _BY_ID.values() if i.session_id in live]
+    candidates = [i for i in _BY_ID.values() if i.session_id in live and _mine(i.session_id, owner)]
     if candidates:
+        if owner is not None:
+            return max(candidates, key=lambda i: (i.extras.get("focused_at", 0), i.last_seen))
         return max(candidates, key=lambda i: i.last_seen)
     return None
 
@@ -154,13 +176,15 @@ def all_records() -> list[PageInfo]:
     return list(_BY_ID.values())
 
 
-def snapshot() -> list[dict[str, Any]]:
+def snapshot(owner: str | None = None) -> list[dict[str, Any]]:
     """Wire-friendly dump for the MCP ``mcp_sessions`` tool. Joined with
     Chainlit's own session registry so we can flag ids that no longer
-    have a live socket."""
+    have a live socket. ``owner``: only that user's tabs (server mode)."""
     live_ids = _live_session_ids()
     out: list[dict[str, Any]] = []
     for info in _BY_ID.values():
+        if not _mine(info.session_id, owner):
+            continue
         d = asdict(info)
         d["connected"] = info.session_id in live_ids
         out.append(d)
