@@ -27,10 +27,15 @@ RUN apt-get update \
  && useradd --create-home --uid 1000 voitta
 
 WORKDIR /app
+# Dependencies first, against an empty package, so that this layer depends only
+# on pyproject.toml and a change to the backend code does not reinstall them.
+# The install is editable, so the code copied afterwards is what gets imported.
 COPY backend/pyproject.toml backend/pyproject.toml
-COPY backend/app backend/app
-RUN python -m venv backend/.venv \
+RUN mkdir -p backend/app \
+ && touch backend/app/__init__.py \
+ && python -m venv backend/.venv \
  && backend/.venv/bin/pip install --no-cache-dir -e backend
+COPY backend/app backend/app
 
 COPY docs docs
 COPY plugins plugins
