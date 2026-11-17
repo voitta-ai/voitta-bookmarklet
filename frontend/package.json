@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "vite build && vite build --config vite.hg.config.ts",
     "preview": "vite preview",
     "test": "vitest run"
   },

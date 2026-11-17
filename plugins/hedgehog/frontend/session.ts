@@ -71,6 +71,7 @@ function flush(beacon: boolean): void {
   if (!queue.length) return;
   const batch = queue;
   queue = [];
+  if (hgMode()) return; // hg has no per-user event log: events stay in the console
   const url = `${getBackendOrigin()}/api/plugin-events/${PLUGIN}`;
   const body = JSON.stringify({ events: batch });
   // A beacon survives the page navigating away (the cross-tab logout does that).
@@ -87,6 +88,7 @@ function flush(beacon: boolean): void {
 }
 
 async function recentEvents(limit = 50): Promise<SessionEvent[]> {
+  if (hgMode()) return [];
   try {
     const r = await fetch(`${getBackendOrigin()}/api/plugin-events/${PLUGIN}?limit=${limit}`, { credentials: "include" });
     if (!r.ok) return [];
@@ -145,7 +147,7 @@ function showBreakBanner(kind: BreakKind, still = false): void {
         : "Open StockTrak in a new tab (that passes the check), close it, then come back here.",
     actions: [
       { label: login ? "Log in in a new tab ↗" : "Open StockTrak in a new tab ↗", href: `${location.origin}${login ? "/login" : "/dashboard"}` },
-      { label: "I'm back, resume", primary: true, needsIdleChat: true, run: () => resume(kind) },
+      { label: "I'm back, resume", primary: true, needsIdleChat: !hgMode(), run: () => resume(kind) },
     ],
   });
 }
@@ -180,10 +182,24 @@ function onLoginPage(): boolean {
   return /^\/(login|logout)\b/i.test(location.pathname);
 }
 
+// hg.voitta.ai panel: no accounts, no settings API, no event log on the server. The panel sets
+// window.__voittaHgBase before loading, and window.__voittaHgKeepalive from its key's settings
+// (then calls refreshKeepalive()).
+type HgWindow = { __voittaHgBase?: string; __voittaHgKeepalive?: boolean };
+function hgMode(): boolean {
+  return Boolean((window as unknown as HgWindow).__voittaHgBase);
+}
+
 function keepaliveWanted(): boolean {
   // Never on the login page: there's no session to keep, and pings would only log more "logged out".
   if (onLoginPage()) return false;
+  if (hgMode()) return Boolean((window as unknown as HgWindow).__voittaHgKeepalive);
   return Boolean((getSettings().plugins?.[PLUGIN] as Record<string, unknown> | undefined)?.keepalive);
+}
+
+/** Re-read the keep-alive switch now (the hg panel calls this when its key's setting changes). */
+export function refreshKeepalive(): void {
+  applyKeepaliveSetting();
 }
 
 function stopKeepalive(): void {

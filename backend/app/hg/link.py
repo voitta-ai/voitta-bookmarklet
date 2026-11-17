@@ -46,14 +46,16 @@ class Tab:
     active_at: float = field(default_factory=time.time)
     pending: dict[int, asyncio.Future] = field(default_factory=dict)
     retired: bool = False
+    tid: int = field(default_factory=lambda: next(_tab_ids))
 
     def public(self) -> dict[str, Any]:
-        return {"page": self.page, "connected_at": self.connected_at, "active_at": self.active_at}
+        return {"id": self.tid, "page": self.page, "connected_at": self.connected_at, "active_at": self.active_at}
 
 
 _tabs: dict[int, list[Tab]] = {}
 _locks: dict[int, asyncio.Lock] = {}
 _ids = itertools.count(1)
+_tab_ids = itertools.count(1)
 
 
 def tabs_for(key_id: int) -> list[Tab]:
@@ -150,7 +152,7 @@ async def serve(ws: WebSocket) -> None:
         return
     tab = Tab(key_id=row["id"], ws=ws, page=str(hello.get("page") or "")[:300])
     _tabs.setdefault(tab.key_id, []).append(tab)
-    await ws.send_text(json.dumps({"t": "ready", "settings": store.public(row)}))
+    await ws.send_text(json.dumps({"t": "ready", "tab": tab.tid, "settings": store.public(row)}))
     try:
         while True:
             msg = json.loads(await ws.receive_text())
