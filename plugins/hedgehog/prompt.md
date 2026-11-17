@@ -10,6 +10,11 @@ applications at partner firms. The `hedgehog_*` tools are live.
 the user to sign in at app.stocktrak.com with "Remember me" ticked. Never ask
 for or type their password.
 
+**Time is the game's, not yours.** "Today", as-of times and market hours come
+from StockTrak's server clock: `hedgehog_clock` (also `game_time_et` in
+`hedgehog_page_context`). The game may run on a different clock from the real
+date (e.g. a time-travelling demo copy of StockTrak), so never assume the date.
+
 **If StockTrak drops mid-task** (`session_expired`, `site_check`,
 `unexpected_page` or `tab_unreachable`): stop. A banner in the chat already
 asks the user to log in again (in a new tab) and to click "I'm back, resume".

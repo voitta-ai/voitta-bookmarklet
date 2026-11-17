@@ -110,3 +110,15 @@ Behaviour observed on the live game (2026-11-02/03) that differs from the rules 
 - Players created in the portal show as `portal:<username>` until linked to StockTrak by identical username.
 - Several public Rewards API endpoints return player emails and wallet addresses without auth. The plugin
   never calls them and scrubs any it sees.
+
+## Game time
+
+- StockTrak exposes no clock in its pages or JSON. The only to-the-second server time is the HTTP `Date`
+  header of every response (`Microsoft-IIS/10.0` behind Imperva; also in Imperva's `X-Iinfo: … RT(<ms>…)`).
+  Date-only signals: date inputs prefilled with today's ET date (`#date-to` on transaction history,
+  `#date-from` on portfolio summary), the quote's `as of MM/DD/YYYY @ hh:mm AM ET` (last trade/close, not now),
+  and `ismarketopen`.
+- The plugin reads `Date` from every `hedgehog_request` (`server_date`) and keeps the offset per session:
+  `hedgehog_clock`, `today_et()` and the `as_of_et` stamps all use it. On the demo simulator
+  (hedgehog.voitta.ai) `Date` carries the simulated time, so the same code follows the simulated clock.
+- Trade notes export: the file is named after the previous day (`TradeNotes_11/14/2026.csv` on 11/15).

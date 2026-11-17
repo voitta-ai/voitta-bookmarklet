@@ -17,7 +17,8 @@ import asyncio
 import logging
 import re
 import time
-from datetime import datetime
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -107,6 +108,8 @@ async def st_call(
         if kind in SESSION_BREAKS:
             note_session_break(ctx)
         raise StockTrakError(kind, str(exc)) from None
+    if isinstance(res, dict):
+        note_server_date(ctx, res.get("server_date"))
     if not isinstance(res, dict):
         note_session_break(ctx)
         what = ("The order/change may or may not have reached StockTrak. " if write else "")
@@ -382,14 +385,60 @@ def earliest_date(orders: list[dict[str, Any]]) -> str | None:
     d = min(days)
     return f"{d.month}/{d.day}/{d.year}"
 
-def today_et() -> str:
-    """Today's date in New York as StockTrak's M/D/YYYY."""
-    d = datetime.now(ET)
+# ── game clock ──────────────────────────────────────────────────────────────
+# StockTrak's server stamps every response with its clock (the HTTP Date header); the browser primitive
+# hands it back as server_date. That is the game's time: real StockTrak's server time, or the simulated
+# time on a time-travelling StockTrak simulator. Keep the offset from our own clock so dates stay right
+# between calls; fall back to our clock until a response has been seen.
+
+_clock_offset: dict[str, float] = {}
+_last_offset: float | None = None
+
+def note_server_date(ctx: Any, server_date: Any) -> None:
+    """Record StockTrak's clock from a response's Date header (RFC 1123)."""
+    global _last_offset
+    if not server_date:
+        return
+    try:
+        t = parsedate_to_datetime(str(server_date))
+    except (TypeError, ValueError):
+        return
+    if t.tzinfo is None:
+        t = t.replace(tzinfo=timezone.utc)
+    off = t.timestamp() - time.time()
+    _clock_offset[getattr(ctx, "session_id", None) or "default"] = off
+    _last_offset = off
+
+def clock_source(ctx: Any = None) -> str:
+    key = getattr(ctx, "session_id", None) or "default"
+    return "stocktrak_server" if key in _clock_offset or _last_offset is not None else "local_clock"
+
+def game_now(ctx: Any = None) -> datetime:
+    """Game time in New York: StockTrak's server time from its last response, else our own clock."""
+    key = getattr(ctx, "session_id", None) or "default"
+    off = _clock_offset.get(key, _last_offset if _last_offset is not None else 0.0)
+    return datetime.fromtimestamp(time.time() + off, ET)
+
+async def sync_clock(ctx: Any, call: Any = None) -> None:
+    """Read StockTrak's clock once for this session if we haven't yet (cheap: /trading/ismarketopen).
+
+    `call` is the caller module's st_call (so tests that replace it see this request too)."""
+    key = getattr(ctx, "session_id", None) or "default"
+    if key in _clock_offset:
+        return
+    try:
+        await (call or st_call)(ctx, "POST", "/trading/ismarketopen", {"tab": "NorthAmerica", "exchange": "US"})
+    except StockTrakError:
+        pass
+
+def today_et(ctx: Any = None) -> str:
+    """Today's game date in New York as StockTrak's M/D/YYYY."""
+    d = game_now(ctx)
     return f"{d.month}/{d.day}/{d.year}"
 
-def now_et_iso() -> str:
-    """Fetch time, ET, to the second — the as-of stamp on read tools."""
-    return datetime.now(ET).isoformat(timespec="seconds")
+def now_et_iso(ctx: Any = None) -> str:
+    """Game time, ET, to the second — the as-of stamp on read tools."""
+    return game_now(ctx).isoformat(timespec="seconds")
 
 
 def setting(key: str, default: Any = None) -> Any:

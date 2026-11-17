@@ -101,6 +101,9 @@ header .alarm-pop {
 }
 .alarm-head { color: var(--voitta-alarm); padding-bottom: 8px; border-bottom: 1px solid var(--voitta-picker-rule); margin-bottom: 4px; }
 .alarm-title { flex: 1; font-weight: 600; color: var(--voitta-picker-fg); }
+.alarm-hold { padding-bottom: 8px; border-bottom: 1px solid var(--voitta-picker-rule); margin-bottom: 4px; }
+.alarm-hold-text { flex: 1; display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.alarm-hold-title { font-weight: 600; color: var(--voitta-picker-fg); }
 .alarm-label { color: var(--voitta-text-muted); width: 52px; flex-shrink: 0; }
 .alarm-row select {
   flex: 1;

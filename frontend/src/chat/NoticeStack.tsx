@@ -15,11 +15,15 @@ const ICON = { info: "ⓘ", warning: "⚠", error: "⛔" } as const;
 export default function NoticeStack() {
   const notices = useNotices();
   if (!notices.length) return null;
+  // The anchor takes no height: the stack floats over the top of the chat, so a banner
+  // appearing or going away never resizes the message list or moves its scroll position.
   return (
-    <div className="notice-stack" role="region" aria-label="Notices">
-      {notices.map((n) => (
-        <NoticeRow key={n.id} n={n} />
-      ))}
+    <div className="notice-anchor">
+      <div className="notice-stack" role="region" aria-label="Notices">
+        {notices.map((n) => (
+          <NoticeRow key={n.id} n={n} />
+        ))}
+      </div>
     </div>
   );
 }

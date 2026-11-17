@@ -314,7 +314,7 @@ async function idleScan(prior: SessionEvent[]): Promise<void> {
 // ── start ────────────────────────────────────────────────────────────────
 
 function onStockTrak(): boolean {
-  return /(^|\.)stocktrak\.com$/i.test(location.hostname);
+  return /(^|\.)stocktrak\.com$|^hedgehog\.voitta\.ai$/i.test(location.hostname);
 }
 
 export function startSession(): void {

@@ -27,7 +27,7 @@ from app.tools.server import ask_user
 
 from voitta_hedgehog._core import (
     StockTrakError, all_text, body_of, clear_session_break, confirm_orders, confirmed_quantity, fail,
-    last_session_break, num, open_positions, st_call, text_of, today_et, trading_enabled,
+    last_session_break, num, open_positions, st_call, sync_clock, text_of, today_et, trading_enabled,
 )
 from voitta_hedgehog.rules import (
     RuleError, build_order_form, build_spread_body, fingerprint, option_moneyness, option_type_from_symbol, parse_money,
@@ -270,7 +270,8 @@ async def _note_saved(ctx: ToolCtx, note: str) -> bool | None:
     if not probe:
         return None
     try:
-        res = await st_call(ctx, "GET", "/account/ExportTradeNotes", {"from": today_et(), "to": today_et()})
+        await sync_clock(ctx, st_call)
+        res = await st_call(ctx, "GET", "/account/ExportTradeNotes", {"from": today_et(ctx), "to": today_et(ctx)})
     except StockTrakError:
         return None
     rows = res.get("rows") or []

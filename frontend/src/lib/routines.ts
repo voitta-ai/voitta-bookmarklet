@@ -323,15 +323,18 @@ export interface TickPlan {
 /**
  * Given the slots that came due since the last tick, choose at most one to
  * fire: the newest fresh one, and only if the chat is idle. Everything else
- * is dropped — a chime never queues behind another.
+ * is dropped — a chime never queues behind another. `staleMs` is in clock
+ * time: callers on a sped-up page clock widen it by the clock's rate.
  */
-export function planTick(due: Slot[], now: number, busy: boolean, asking: boolean): TickPlan {
+export function planTick(
+  due: Slot[], now: number, busy: boolean, asking: boolean, staleMs: number = STALE_MS,
+): TickPlan {
   const missed: TickPlan["missed"] = [];
-  const fresh = due.filter((s) => now - s.at <= STALE_MS);
+  const fresh = due.filter((s) => now - s.at <= staleMs);
   const newest = fresh.length ? fresh[fresh.length - 1] : null;
   for (const s of due) {
     if (s === newest) continue;
-    missed.push({ slot: s, outcome: now - s.at > STALE_MS ? "stale" : "busy" });
+    missed.push({ slot: s, outcome: now - s.at > staleMs ? "stale" : "busy" });
   }
   if (!newest) return { candidate: null, missed };
   if (busy || asking) {

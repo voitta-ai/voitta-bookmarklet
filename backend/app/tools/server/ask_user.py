@@ -160,6 +160,14 @@ async def _handler(args: dict[str, Any], ctx: ToolCtx) -> dict[str, Any]:
         element = cl.CustomElement(name="AskUserQuestion", props={"questions": questions})
         ask = cl.AskElementMessage(content=headline, element=element, timeout=int(ASK_TIMEOUT_S))
         res = await ask.send()
+        # Chainlit's send_ask_user ends the task "temporarily" once the user answers and never
+        # starts it again, so the UI treats the rest of this turn as idle: Send unlocks and a page
+        # that pauses for the agent (voitta:agent) resumes mid-turn. The turn goes on after this
+        # tool returns, so mark it running again; the real task_end comes when the turn finishes.
+        try:
+            await cl_ctx.emitter.task_start()
+        except Exception:
+            logger.exception("ask_user_question: task_start after the answer failed")
 
         async def _finish(content: str) -> None:
             ask.content = content

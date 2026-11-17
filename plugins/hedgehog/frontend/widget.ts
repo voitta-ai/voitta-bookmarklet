@@ -55,8 +55,9 @@ const WRITE_PATHS = new Set([
 
 const MAX_ROWS = 500;
 
+// app.stocktrak.com, or the StockTrak-compatible simulator (same API, same pages) used for demos.
 function onStockTrak(): boolean {
-  return /(^|\.)stocktrak\.com$/i.test(location.hostname);
+  return /(^|\.)stocktrak\.com$|^hedgehog\.voitta\.ai$/i.test(location.hostname);
 }
 
 function requireStockTrak(): void {
@@ -189,7 +190,8 @@ registerPrimitive("hedgehog_request", async (rawArgs) => {
   const ctype = r.headers.get("content-type") || "";
   const disp = r.headers.get("content-disposition") || "";
   const text = await r.text();
-  const meta = { status: r.status, path, ms: Math.round(performance.now() - started) };
+  // StockTrak's server clock (the game clock): the HTTP Date header. Same on the real site and the simulator.
+  const meta = { status: r.status, path, ms: Math.round(performance.now() - started), server_date: r.headers.get("date") };
 
   const verdict = classifyResponse({ status: r.status, url: r.url, ctype: /attachment/i.test(disp) ? "text/csv" : ctype, text, path });
   if (verdict.kind === "site_check") {

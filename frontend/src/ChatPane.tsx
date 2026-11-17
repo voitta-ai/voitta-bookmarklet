@@ -12,7 +12,7 @@ import {
   useChatInteract,
   useChatMessages,
 } from "@chainlit/react-client";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useRecoilValue, useSetRecoilState } from "recoil";
 import MessageList from "./chat/MessageList";
 import Composer from "./chat/Composer";
@@ -22,7 +22,13 @@ import type { ImageAttachment } from "./lib/image-attach";
 import { encodeFiles } from "./lib/attachments";
 import { useAuthConnect } from "./lib/useAuthConnect";
 import { useRoutineScheduler } from "./lib/useRoutineScheduler";
-import { setChatHandle } from "./lib/notices";
+import { announceAgent, holdStore, markStopped, releaseHold, resetAgent } from "./lib/pageClock";
+import { clearNotice, setChatHandle, showNotice } from "./lib/notices";
+
+// How long the agent must look idle before the page is told (see the announce effect).
+const IDLE_SETTLE_MS = 1_500;
+// The banner that asks the user to release a held page ("Hold after each run").
+const HOLD_NOTICE = "voitta.hold";
 
 // One row of /api/agent_sdk/sessions/{id}/messages (see
 // backend/app/services/agent_sdk/sessions.py:_transcript_rows).
@@ -224,6 +230,44 @@ export default function ChatPane({
     send: (text) => sendMessage({ output: text, name: "user", type: "user_message" }, []),
   });
 
+  // Tell the host page while the agent works (a turn, or a question waiting for
+  // the user), so a page that runs its own clock can pause it. See pageClock.ts.
+  // Busy is announced at once; idle only once it has held for IDLE_SETTLE_MS, so the
+  // short gaps inside one turn (an answered question before the turn is marked running
+  // again, a reconnect) don't let the page resume and pause again mid-turn.
+  const agentBusy = busy || !!askUser;
+  const idleTimer = useRef<number>(0);
+  useEffect(() => {
+    window.clearTimeout(idleTimer.current);
+    if (agentBusy) announceAgent(true);
+    else idleTimer.current = window.setTimeout(() => announceAgent(false), IDLE_SETTLE_MS);
+    return () => window.clearTimeout(idleTimer.current);
+  }, [agentBusy]);
+  // Leaving the chat hands the page back, held or not.
+  useEffect(() => () => {
+    resetAgent();
+    clearNotice(HOLD_NOTICE);
+  }, []);
+
+  // "Hold after each run" (alarm popover): after a turn the page stays paused until
+  // the user releases it here (or resumes the page itself, which drops the hold).
+  const hold = useSyncExternalStore(holdStore.subscribe, holdStore.get);
+  useEffect(() => {
+    if (!hold.held) {
+      clearNotice(HOLD_NOTICE);
+      return;
+    }
+    showNotice({
+      id: HOLD_NOTICE,
+      source: "voitta",
+      level: "info",
+      text: "Paused after the agent's run",
+      detail: "The page waits for you. Release to hand control back.",
+      dismissible: false,
+      actions: [{ label: "Release ▶", primary: true, run: () => releaseHold() }],
+    });
+  }, [hold.held]);
+
   // Let notice buttons (plugin banners) send a message as the user while
   // this chat is idle. A pending question counts as busy: a new message
   // would start a second, concurrent turn.
@@ -306,7 +350,10 @@ export default function ChatPane({
         onAttach={onAttach}
         onRemoveAttachment={onRemoveAttachment}
         onSend={onSend}
-        onStop={() => stopTask()}
+        onStop={() => {
+          markStopped();
+          stopTask();
+        }}
       />
     </div>
   );
