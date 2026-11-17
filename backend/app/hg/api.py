@@ -199,6 +199,48 @@ async def panel_js():
                     headers={"Cache-Control": "no-cache", "Access-Control-Allow-Origin": "*"})
 
 
+# ── hardened-site bridge (Salesforce-style pages) ────────────────────────
+# Same popup relay as the main app (app.bridge), served on this host so it can only reach hg's
+# routes (the relay forwards to its own origin only). Two differences: no site-approval step
+# (hg has no accounts), and boot loads the hg panel instead of the main widget.
+
+
+def _hg_relay_js() -> str:
+    from app.bridge import _RELAY_JS
+
+    # Skip approval: hg keys are the identity, there's no per-account site list here.
+    out = _RELAY_JS.replace("approveThenBoot();\n      return;", "sendBoot();\n      return;", 1)
+    assert out != _RELAY_JS, "bridge relay changed: update the hg patch"
+    return out
+
+
+def _hg_boot_js() -> str:
+    from app.bridge import _BOOT_JS
+
+    # The shims install as usual; then fetch and run the hg panel instead of widget.js.
+    out = _BOOT_JS.replace('window.fetch(BACKEND + "/widget.js")', 'window.fetch(BACKEND + "/hg/panel.js")', 1)
+    assert out != _BOOT_JS, "bridge boot changed: update the hg patch"
+    return "window.__voittaHgBase = window.__voittaBackendOrigin;\n" + out
+
+
+@app.get("/bridge", include_in_schema=False)
+async def hg_bridge_page():
+    from app.bridge import _BRIDGE_HTML
+
+    return HTMLResponse(_BRIDGE_HTML.replace("Voitta bridge", "Hedgehog bridge"), headers={
+        "Cache-Control": "no-store", "X-Frame-Options": "DENY", "Content-Security-Policy": "frame-ancestors 'none'"})
+
+
+@app.get("/bridge/relay.js", include_in_schema=False)
+async def hg_bridge_relay():
+    return Response(_hg_relay_js(), media_type="application/javascript", headers={"Cache-Control": "no-store"})
+
+
+@app.get("/bridge/boot.js", include_in_schema=False)
+async def hg_bridge_boot():
+    return Response(_hg_boot_js(), media_type="application/javascript", headers={"Cache-Control": "no-store"})
+
+
 # ── /v1: status ──────────────────────────────────────────────────────────
 
 
@@ -424,26 +466,67 @@ def _public_base(request: Request) -> str:
 
 
 def bookmarklet(base: str) -> str:
+    """Regular: fetch the panel straight from hg and run it (pages whose CSP allows that, e.g.
+    StockTrak: connect-src https: + 'unsafe-eval')."""
     js = ("(()=>{if(window.__voittaHg){window.__voittaHg.show();return}"
           f"fetch('{base}/hg/panel.js').then(r=>r.text()).then(c=>{{window.__voittaHgBase='{base}';(0,eval)(c)}})"
-          ".catch(e=>alert('Hedgehog panel failed to load: '+e))})()")
+          ".catch(e=>alert('Hedgehog panel failed to load ('+e+'). Try the Salesforce bookmarklet.'))})()")
     return "javascript:" + js
+
+
+def bridge_bookmarklet(base: str) -> str:
+    """Salesforce-style pages whose CSP blocks loading/reaching hg: open the Hedgehog bridge window
+    on hg and run the panel through it (app.bridge mechanics; hg's /bridge serves the hg panel)."""
+    from app.bookmarklets import bridge_bookmarklet as main_bridge
+
+    js = main_bridge(base)
+    # Re-click while the panel is up: just show it.
+    return js.replace("javascript:(()=>{", "javascript:(()=>{if(window.__voittaHg){window.__voittaHg.show();return}", 1)
+
+
+_BM_JS = """
+document.querySelectorAll('[data-copy]').forEach(function (b) {
+  b.addEventListener('click', function () {
+    var href = document.getElementById(b.dataset.copy).href, done = function (m) {
+      var t = b.textContent; b.textContent = m; setTimeout(function () { b.textContent = t; }, 1600); };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(href).then(function () { done('Copied ✓'); }, function () { done('Select & copy'); });
+    } else { done('Select & copy'); }
+  });
+});
+document.querySelectorAll('a.bm').forEach(function (a) {
+  a.addEventListener('click', function (e) {
+    e.preventDefault();
+    var tip = document.getElementById('tip'); tip.hidden = false;
+    setTimeout(function () { tip.hidden = true; }, 4000);
+  });
+});
+"""
 
 
 @app.get("/", include_in_schema=False)
 async def landing(request: Request):
     base = _public_base(request)
-    bm = html.escape(bookmarklet(base), quote=True)
+    regular = html.escape(bookmarklet(base), quote=True)
+    bridge = html.escape(bridge_bookmarklet(base), quote=True)
     doc = f"""<!doctype html><html lang=en><meta charset=utf-8>
 <meta name=viewport content="width=device-width,initial-scale=1"><title>Hedgehog API</title>
 <style>
-:root{{--bg:#fff;--fg:#1a1d23;--muted:#5f6673;--border:#d9dde3;--accent:#2563eb;--card:#f7f8fa}}
-@media (prefers-color-scheme:dark){{:root{{--bg:#14171c;--fg:#e8eaee;--muted:#9aa1ad;--border:#2c323b;--accent:#3b82f6;--card:#1b1f26}}}}
+:root{{--bg:#fff;--fg:#1a1d23;--muted:#5f6673;--border:#d9dde3;--accent:#2563eb;--accent2:#0f766e;--card:#f7f8fa}}
+@media (prefers-color-scheme:dark){{:root{{--bg:#14171c;--fg:#e8eaee;--muted:#9aa1ad;--border:#2c323b;--accent:#3b82f6;--accent2:#14b8a6;--card:#1b1f26}}}}
 body{{margin:0;background:var(--bg);color:var(--fg);font:16px/1.55 system-ui,-apple-system,sans-serif}}
-main{{max-width:680px;margin:0 auto;padding:48px 20px}}
+main{{max-width:720px;margin:0 auto;padding:48px 20px}}
 h1{{font-size:28px;margin:0 0 6px}} .muted{{color:var(--muted)}}
-.bm{{display:inline-block;margin:18px 0 6px;padding:12px 22px;border-radius:10px;background:var(--accent);color:#fff;
-  font-weight:700;text-decoration:none;cursor:grab}}
+.bms{{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:24px 0 8px}}
+@media (max-width:560px){{.bms{{grid-template-columns:1fr}}}}
+.bmcard{{border:1px solid var(--border);border-radius:12px;padding:14px 16px;background:var(--card);display:flex;flex-direction:column;gap:8px}}
+.bmcard h2{{font-size:15px;margin:0}} .bmcard p{{margin:0;font-size:13.5px}}
+.bm{{display:inline-block;align-self:flex-start;padding:10px 18px;border-radius:10px;background:var(--accent);color:#fff;
+  font-weight:700;text-decoration:none;cursor:grab;user-select:none}}
+.bm.sf{{background:var(--accent2)}}
+.row{{display:flex;gap:8px;align-items:center;flex-wrap:wrap}}
+.copy{{font:inherit;font-size:13px;padding:6px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--fg);cursor:pointer}}
+.tip{{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:8px 12px;font-size:14px}}
 ol{{padding-left:22px}} li{{margin:6px 0}}
 .card{{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-top:22px}}
 code{{font-family:ui-monospace,Menlo,monospace;font-size:13.5px}} a{{color:var(--accent)}}
@@ -451,9 +534,29 @@ code{{font-family:ui-monospace,Menlo,monospace;font-size:13.5px}} a{{color:var(-
 <main>
 <h1>Hedgehog API</h1>
 <p class=muted>Trade and read your Hedgehog Camp account from Claude Code, scripts and other tools.</p>
-<a class=bm href="{bm}" onclick="event.preventDefault();alert('Drag this button to your bookmarks bar, then click it on app.stocktrak.com.')">🦔 Hedgehog</a>
+
+<div class=bms>
+  <div class=bmcard>
+    <h2>Regular</h2>
+    <p class=muted>For app.stocktrak.com and most sites. Loads right into the page.</p>
+    <div class=row>
+      <a id=bm-regular class=bm href="{regular}" draggable=true title="Drag to your bookmarks bar">🦔 Hedgehog</a>
+      <button type=button class=copy data-copy=bm-regular>Copy</button>
+    </div>
+  </div>
+  <div class=bmcard>
+    <h2>Salesforce</h2>
+    <p class=muted>For strict sites (Salesforce and the like) where Regular is blocked. Opens a small Hedgehog window; keep it open.</p>
+    <div class=row>
+      <a id=bm-salesforce class="bm sf" href="{bridge}" draggable=true title="Drag to your bookmarks bar">🦔 Hedgehog (Salesforce)</a>
+      <button type=button class=copy data-copy=bm-salesforce>Copy</button>
+    </div>
+  </div>
+</div>
+<div id=tip class=tip hidden>Don't click it here: <b>drag</b> it to your bookmarks bar (or <b>Copy</b> and paste it as a new bookmark's URL), then click it on app.stocktrak.com.</div>
+
 <ol>
-<li>Drag the <b>🦔 Hedgehog</b> button to your browser's bookmarks bar.</li>
+<li><b>Drag</b> a button to your browser's bookmarks bar, or <b>Copy</b> it and paste it as the URL of a new bookmark.</li>
 <li>Open <a href="https://app.stocktrak.com">app.stocktrak.com</a> and log in.</li>
 <li>Click the bookmark. The panel shows your <b>API key</b> and how to connect Claude Code, Claude Desktop or any REST client.</li>
 <li>Keep that StockTrak tab open: every API call runs in it.</li>
@@ -462,6 +565,10 @@ code{{font-family:ui-monospace,Menlo,monospace;font-size:13.5px}} a{{color:var(-
 <b>Docs:</b> <a href="/docs">REST API reference</a> · MCP endpoint <code>{html.escape(base)}/mcp/</code><br>
 <span class=muted>No sign-up: your key lives in your browser. Trading through the API is on by default; switch it off in the panel.</span>
 </div>
-</main></html>"""
-    return HTMLResponse(doc, headers={"Cache-Control": "no-store", "X-Frame-Options": "DENY",
-                                      "Content-Security-Policy": "frame-ancestors 'none'"})
+</main>
+<script>{_BM_JS}</script></html>"""
+    return HTMLResponse(doc, headers={
+        "Cache-Control": "no-store", "X-Frame-Options": "DENY",
+        "Content-Security-Policy": ("default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; "
+                                    "img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'"),
+    })

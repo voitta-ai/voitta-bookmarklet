@@ -43,7 +43,7 @@ MAIN_PATHS = [
     ("GET", "/api/workspace/files"), ("POST", "/api/workspace/scripts/x/run"), ("GET", "/api/auth/me"),
     ("POST", "/api/auth/password"), ("GET", "/api/plugin-events/hedgehog"), ("GET", "/api/models/anthropic"),
     ("GET", "/chainlit/project/settings"), ("GET", "/chainlit/ws/socket.io/?EIO=4&transport=polling"),
-    ("GET", "/widget.js"), ("GET", "/bookmarklets"), ("GET", "/bridge"), ("GET", "/auth/signin"),
+    ("GET", "/widget.js"), ("GET", "/bookmarklets"), ("GET", "/auth/signin"),
     ("GET", "/auth/keys"), ("GET", "/health"), ("GET", "/api/eval/v1/sessions"),
 ]
 
@@ -316,3 +316,57 @@ def test_mcp_auth_and_tools(hg):
                 json={"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "hedgehog_account", "arguments": {}}})
     res = _sse(r)["result"]
     assert res["isError"] is True and "tab_offline" in res["content"][0]["text"]
+
+
+# ── the Salesforce (bridge) bookmarklet ────────────────────────────────────
+
+
+def test_bridge_link_trusts_via_only_from_our_own_bridge(hg, panels):
+    key = _key(hg)
+    from starlette.websockets import WebSocketDisconnect
+
+    def connect(origin, via):
+        url = f"wss://hg.voitta.ai/hg/link?voitta_via={via}"
+        with hg.websocket_connect(url, headers={"Origin": origin}) as ws:
+            ws.send_text(json.dumps({"t": "hello", "key": key}))
+            return json.loads(ws.receive_text())["t"]
+
+    # through hg's own bridge window (Origin = hg) naming StockTrak → accepted
+    assert connect("https://hg.voitta.ai", ST) == "ready"
+    # another site can't claim to be StockTrak with the tag
+    with pytest.raises(WebSocketDisconnect):
+        connect("https://evil.example", ST)
+    # our bridge relaying for a non-StockTrak page → refused
+    with pytest.raises(WebSocketDisconnect):
+        connect("https://hg.voitta.ai", "https://evil.example")
+
+
+def test_landing_has_both_bookmarklets_draggable_and_copyable(hg):
+    import html as _html
+    import re as _re
+
+    page = hg.get("/").text
+    links = dict(_re.findall(r'<a id=(bm-\w+)[^>]*href="(javascript:[^"]+)"', page))
+    assert set(links) == {"bm-regular", "bm-salesforce"}
+    for bid in links:
+        assert f"data-copy={bid}" in page
+    assert "/hg/panel.js" in _html.unescape(links["bm-regular"])
+    assert "/bridge'" in _html.unescape(links["bm-salesforce"])
+
+
+def test_hg_bridge_serves_the_hg_panel_without_site_approval(hg):
+    relay = hg.get("/bridge/relay.js").text
+    boot = hg.get("/bridge/boot.js").text
+    assert "approveThenBoot();\n      return;" not in relay  # no account → no approval step
+    assert "/hg/panel.js" in boot and 'BACKEND + "/widget.js"' not in boot
+    assert hg.get("/bridge").headers["x-frame-options"] == "DENY"
+
+
+def test_hg_bridge_is_hg_only_not_the_main_one(hg):
+    # /bridge exists on hg, but it's hg's own: titled Hedgehog, boots the hg panel, never the main
+    # widget, and has no approve/sign-in calls into the main app.
+    page = hg.get("/bridge").text
+    assert "Hedgehog bridge" in page and "Voitta bridge" not in page
+    relay = hg.get("/bridge/relay.js").text
+    assert "approveThenBoot();\n      return;" not in relay
+    assert 'BACKEND + "/widget.js"' not in hg.get("/bridge/boot.js").text

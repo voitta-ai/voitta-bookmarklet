@@ -134,9 +134,25 @@ async def retire(key_id: int) -> None:
             pass
 
 
+def effective_origin(ws: WebSocket) -> str | None:
+    """The page the panel runs in.
+
+    Direct (regular bookmarklet): the browser's ``Origin`` header. Through the bridge window
+    (Salesforce-style pages) the socket is opened by hg's OWN bridge page, so ``Origin`` is hg itself
+    and the relay names the real page in ``?voitta_via=`` — learned from the opener's browser-verified
+    postMessage origin. That tag is only believed when ``Origin`` is this hg host, so another site
+    can't use it to pose as StockTrak."""
+    origin = (ws.headers.get("origin") or "").strip().lower()
+    host = (ws.headers.get("host") or "").strip().lower()
+    own = {f"https://{host}", f"http://{host}"} if host else set()
+    if origin in own:
+        return ws.query_params.get("voitta_via")
+    return origin or None
+
+
 async def serve(ws: WebSocket) -> None:
     """One panel connection. Refuses anything not from a StockTrak page or without a live key."""
-    if not origin_allowed(ws.headers.get("origin")):
+    if not origin_allowed(effective_origin(ws)):
         await ws.close(code=4403)
         return
     await ws.accept()
