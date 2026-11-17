@@ -1,0 +1,428 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Hedgehog API</title>
+<style>
+:root{--ink:#051c2c;--ink2:#2c3c48;--mute:#68747e;--rule:#d5dadf;--hair:#e6e9ec;--cy:#00a9f4;--cyw:#e3f5fe;--bg:#fff;--soft:#f4f6f8;
+ --sans:-apple-system,BlinkMacSystemFont,"Helvetica Neue",Helvetica,Arial,sans-serif;--serif:Georgia,"Times New Roman",serif;
+ --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+@media (prefers-color-scheme:dark){:root{--ink:#e9edf1;--ink2:#c3cbd2;--mute:#8d98a2;--rule:#33404b;--hair:#26313a;--cy:#38bdf8;--cyw:#0c2a3a;--bg:#0d151c;--soft:#151f28}}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:13px/1.5 var(--sans)}
+main{max-width:880px;margin:0 auto;padding:22px 18px 40px}
+a{color:var(--ink);text-decoration:underline;text-decoration-color:var(--cy);text-underline-offset:2px}
+code,kbd,.mono{font-family:var(--mono);font-size:11.5px}
+kbd{border:1px solid var(--rule);border-bottom-width:2px;border-radius:3px;padding:0 4px;background:var(--bg);white-space:nowrap}
+/* running head */
+.rh{display:flex;justify-content:space-between;align-items:baseline;gap:12px;border-bottom:1px solid var(--ink);padding-bottom:6px;
+ font:11px/1 var(--serif);letter-spacing:.18em;text-transform:uppercase}
+.rh nav{display:flex;gap:14px;letter-spacing:.06em;font-family:var(--sans);font-size:11px;text-transform:none}
+.rh nav a{text-decoration:none;color:var(--mute)} .rh nav a:hover{color:var(--ink)}
+/* title */
+h1{font:700 20px/1.2 var(--sans);margin:16px 0 4px;letter-spacing:-.01em}
+.dek{margin:0 0 14px;color:var(--ink2);max-width:640px}
+/* exhibit label */
+.ex{display:inline-block;background:var(--ink);color:var(--bg);font:700 9.5px/1 var(--sans);letter-spacing:.12em;text-transform:uppercase;padding:4px 6px 3px}
+.exh{font:700 13px/1.3 var(--sans);margin:6px 0 2px}
+.cap{font-size:10.5px;color:var(--mute);margin:4px 0 0}
+/* sections */
+section{border-top:1px solid var(--rule);padding:12px 0 6px;margin-top:14px}
+.sh{display:flex;align-items:baseline;gap:8px;margin:0 0 8px}
+.sh .n{color:var(--cy);font:700 13px/1 var(--sans)}
+.sh h2{font:700 15px/1.2 var(--serif);margin:0}
+.sh .sub{color:var(--mute);font-size:12px}
+.grid{display:grid;grid-template-columns:minmax(0,1fr) 270px;gap:0 22px}
+.grid>.side{border-left:1px solid var(--hair);padding-left:18px}
+@media (max-width:700px){.grid{grid-template-columns:minmax(0,1fr)}.grid>.side svg{max-width:340px}.grid>.side{border-left:0;padding-left:0;border-top:1px dotted var(--rule);padding-top:8px;margin-top:8px}}
+/* bookmarklets */
+.bms{display:grid;grid-template-columns:1fr 1fr;gap:0 18px;margin:0 0 8px}
+.bm-row{display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px dotted var(--rule)}
+.bm-row .what{flex:1;min-width:0;font-size:11.5px;color:var(--mute);line-height:1.35}
+.bm-row .what b{color:var(--ink);font-weight:700}
+a.bm{display:inline-flex;align-items:center;gap:4px;white-space:nowrap;padding:2px 8px;border:1px solid var(--cy);border-radius:2px;
+ color:var(--ink);text-decoration:none;font-weight:700;font-size:12px;cursor:grab;background:var(--bg)}
+a.bm:hover{background:var(--cyw)}
+a.bm.sf{border-style:dashed}
+.copy{font:11px var(--sans);color:var(--mute);background:none;border:0;padding:0;cursor:pointer;text-decoration:underline;text-underline-offset:2px}
+.copy:hover{color:var(--ink)}
+@media (max-width:560px){.bms{grid-template-columns:minmax(0,1fr)}.sh{flex-wrap:wrap}.x1{min-width:0}}
+#tip{font-size:11.5px;color:var(--ink2);border-left:2px solid var(--cy);padding:2px 0 2px 8px;margin:4px 0 0}
+/* tabs */
+.tabs{display:flex;gap:0;border-bottom:1px solid var(--rule);margin:2px 0 8px;flex-wrap:wrap}
+.tabs button{font:600 11.5px/1 var(--sans);color:var(--mute);background:none;border:0;border-bottom:2px solid transparent;
+ padding:6px 10px 6px 0;margin:0 10px -1px 0;cursor:pointer}
+.tabs button[aria-selected=true]{color:var(--ink);border-bottom-color:var(--cy)}
+[hidden]{display:none!important}
+ol.steps{margin:0;padding:0;list-style:none;counter-reset:s}
+ol.steps li{counter-increment:s;position:relative;padding:3px 0 3px 18px;border-bottom:1px dotted var(--hair)}
+ol.steps li::before{content:counter(s);position:absolute;left:0;top:3px;color:var(--cy);font-weight:700;font-size:11.5px}
+.note{font-size:11.5px;color:var(--mute);margin:6px 0 0}
+/* shortcut table */
+table{border-collapse:collapse;width:100%;font-size:11.5px}
+th{font:700 9.5px/1 var(--sans);letter-spacing:.1em;text-transform:uppercase;color:var(--mute);text-align:left;padding:5px 6px 4px 0;border-bottom:1px solid var(--ink)}
+td{padding:3px 6px 3px 0;border-bottom:1px dotted var(--rule);vertical-align:top}
+td:first-child{font-weight:600;white-space:nowrap}
+/* code */
+.code{position:relative;border-left:2px solid var(--cy);background:var(--soft);margin:6px 0 0}
+.code pre{margin:0;padding:7px 52px 7px 9px;font:11px/1.45 var(--mono);white-space:pre-wrap;word-break:break-all;color:var(--ink)}
+.code .copy{position:absolute;right:8px;top:6px}
+.k{color:var(--cy)}
+/* reference */
+.ref{display:grid;grid-template-columns:1fr 1fr;gap:0 22px}
+.ref table td:first-child{font:600 11px var(--mono)}
+@media (max-width:700px){.ref{grid-template-columns:minmax(0,1fr)}.ref td:first-child{white-space:normal;word-break:break-all}}
+.foot{border-top:1px solid var(--rule);margin-top:16px;padding-top:6px;font-size:10.5px;color:var(--mute)}
+.foot p{margin:2px 0}
+/* ── animations (line art) ── */
+svg.anim{width:100%;height:auto;display:block;overflow:visible}
+svg.anim text{font-family:var(--sans);fill:var(--ink)}
+svg.anim .t{font-size:7px} svg.anim .ts{font-size:6px;fill:var(--mute)} svg.anim .tb{font-size:8px;font-weight:700}
+svg.anim .tm{font-family:var(--mono);font-size:6.3px} svg.anim .tc{fill:var(--cy)} svg.anim .tw{fill:var(--bg)}
+svg.anim .win{fill:var(--bg);stroke:var(--rule)} svg.anim .chrome{fill:var(--soft);stroke:none}
+svg.anim .ln{stroke:var(--rule);stroke-width:1;fill:none} svg.anim .ink{stroke:var(--ink);fill:none;stroke-width:1}
+svg.anim .fill{fill:var(--soft)} svg.anim .dot{fill:var(--rule)}
+svg.anim .chip{fill:var(--bg);stroke:var(--cy)} svg.anim .cyf{fill:var(--cy)} svg.anim .cyw{fill:var(--cyw)}
+svg.anim .cur{fill:var(--ink);stroke:var(--bg);stroke-width:.8}
+svg.anim .dash{stroke:var(--cy);stroke-dasharray:2 2;fill:none}
+svg.anim .cov{fill:var(--bg);transform-box:fill-box;transform-origin:right center;transform:scaleX(0)}
+svg.anim .cov.s{fill:var(--soft)}
+svg.anim *{animation-iteration-count:infinite!important;animation-fill-mode:both!important}
+@media (prefers-reduced-motion:reduce){svg.anim *{animation:none!important}}
+/* exhibit 1: request/response dots */
+.x1 .req{animation:x1req 4.8s linear} .x1 .res{animation:x1res 4.8s linear}
+@keyframes x1req{0%{transform:translateX(0);opacity:0}4%{opacity:1}44%{transform:translateX(300px);opacity:1}46%,100%{transform:translateX(300px);opacity:0}}
+@keyframes x1res{0%,50%{transform:translateX(0);opacity:0}54%{opacity:1}94%{transform:translateX(-300px);opacity:1}96%,100%{transform:translateX(-300px);opacity:0}}
+.x1 .req,.x1 .res{opacity:0}
+/* drag to bar */
+.a-drag .ghost{animation:dragg 5s cubic-bezier(.45,.05,.3,1)}
+@keyframes dragg{0%,10%{transform:translate(0,0);opacity:0}14%{opacity:1;transform:translate(0,0)}22%{transform:translate(0,0)}58%{transform:translate(-72px,-73px);opacity:1}64%,100%{transform:translate(-72px,-73px);opacity:0}}
+.a-drag .ghost{opacity:0}
+.a-drag .drop{animation:fadein 5s} @keyframes fadein{0%,60%{opacity:0}66%,100%{opacity:1}}
+.a-drag .trail{animation:trail 5s} @keyframes trail{0%,16%{opacity:0}22%,58%{opacity:1}64%,100%{opacity:0}}
+.a-drag .trail{opacity:0}
+.a-drag .hint{animation:hint 5s} @keyframes hint{0%,8%{opacity:1}14%,100%{opacity:0}}
+.a-drag .hint{opacity:0}
+/* bookmark manager */
+.a-mgr .cur{animation:mgrc 6.4s cubic-bezier(.45,.05,.3,1)}
+@keyframes mgrc{0%{transform:translate(206px,112px)}12%,16%{transform:translate(240px,20px)}24%,30%{transform:translate(184px,35px)}
+ 60%{transform:translate(184px,35px)}68%,74%{transform:translate(176px,99px)}86%,100%{transform:translate(226px,120px)}}
+.a-mgr .cur{transform:translate(226px,120px)}
+.a-mgr .menu{animation:mgrm 6.4s} @keyframes mgrm{0%,17%{opacity:0}19%,31%{opacity:1}33%,100%{opacity:0}}
+.a-mgr .menu{opacity:0}
+.a-mgr .dlg{animation:mgrd 6.4s} @keyframes mgrd{0%,32%{opacity:0}35%,76%{opacity:1}80%,100%{opacity:0}}
+.a-mgr .dlg{opacity:0}
+.a-mgr .c1{animation:mgr1 6.4s steps(9)} @keyframes mgr1{0%,37%{transform:scaleX(1)}46%,100%{transform:scaleX(0)}}
+.a-mgr .c2{animation:mgr2 6.4s steps(22)} @keyframes mgr2{0%,48%{transform:scaleX(1)}62%,100%{transform:scaleX(0)}}
+.a-mgr .newrow{animation:fadein2 6.4s} @keyframes fadein2{0%,78%{opacity:0}84%,100%{opacity:1}}
+.a-mgr .press{animation:press 6.4s} @keyframes press{0%,71%{opacity:0}72%,75%{opacity:1}76%,100%{opacity:0}}
+.a-mgr .press{opacity:0}
+/* claude desktop */
+.a-cd .cur{animation:cdc 5.6s cubic-bezier(.45,.05,.3,1)}
+@keyframes cdc{0%,18%{transform:translate(34px,58px)}46%,100%{transform:translate(216px,94px)}}
+.a-cd .cur{transform:translate(216px,94px)}
+.a-cd .ring{transform-box:fill-box;transform-origin:center;animation:ring 5.6s}
+@keyframes ring{0%,6%{opacity:0;transform:scale(.6)}8%{opacity:1}12%{opacity:0;transform:scale(1.4)}13%{opacity:1;transform:scale(.6)}17%{opacity:0;transform:scale(1.4)}100%{opacity:0}}
+.a-cd .ring{opacity:0}
+.a-cd .dlg{animation:cdd 5.6s} @keyframes cdd{0%,18%{opacity:0}24%,100%{opacity:1}}
+.a-cd .inst{animation:cdi 5.6s} @keyframes cdi{0%,50%{opacity:1}53%,100%{opacity:0}}
+.a-cd .inst{opacity:0}
+.a-cd .done{animation:cdo 5.6s} @keyframes cdo{0%,50%{opacity:0}54%,100%{opacity:1}}
+.a-cd .ask{animation:cda 5.6s} @keyframes cda{0%,62%{opacity:0}70%,100%{opacity:1}}
+/* claude code */
+.a-cc .c1{animation:cc1 6s steps(30)} @keyframes cc1{0%,4%{transform:scaleX(1)}26%,100%{transform:scaleX(0)}}
+.a-cc .c2{animation:cc2 6s steps(30)} @keyframes cc2{0%,26%{transform:scaleX(1)}46%,100%{transform:scaleX(0)}}
+.a-cc .o1{animation:cco 6s} @keyframes cco{0%,52%{opacity:0}56%,100%{opacity:1}}
+.a-cc .c3{animation:cc3 6s steps(22)} @keyframes cc3{0%,62%{transform:scaleX(1)}80%,100%{transform:scaleX(0)}}
+.a-cc .o2{animation:cco2 6s} @keyframes cco2{0%,84%{opacity:0}88%,100%{opacity:1}}
+/* rest */
+.a-rs .req{animation:rsr 5s linear} @keyframes rsr{0%,8%{transform:translateX(0);opacity:0}10%{opacity:1}36%{transform:translateX(68px);opacity:1}38%,100%{transform:translateX(68px);opacity:0}}
+.a-rs .req{opacity:0}
+.a-rs .r1{animation:rs1 5s steps(14)} @keyframes rs1{0%,40%{transform:scaleX(1)}52%,100%{transform:scaleX(0)}}
+.a-rs .r2{animation:rs2 5s steps(14)} @keyframes rs2{0%,52%{transform:scaleX(1)}64%,100%{transform:scaleX(0)}}
+.a-rs .r3{animation:rs3 5s steps(14)} @keyframes rs3{0%,64%{transform:scaleX(1)}76%,100%{transform:scaleX(0)}}
+.a-rs .ok{animation:rsok 5s} @keyframes rsok{0%,38%{opacity:0}42%,100%{opacity:1}}
+/* other mcp */
+.a-mc .m1{animation:mc1 5.4s steps(18)} @keyframes mc1{0%,6%{transform:scaleX(1)}22%,100%{transform:scaleX(0)}}
+.a-mc .m2{animation:mc2 5.4s steps(26)} @keyframes mc2{0%,22%{transform:scaleX(1)}42%,100%{transform:scaleX(0)}}
+.a-mc .m3{animation:mc3 5.4s steps(30)} @keyframes mc3{0%,42%{transform:scaleX(1)}62%,100%{transform:scaleX(0)}}
+.a-mc .on{animation:mcon 5.4s} @keyframes mcon{0%,68%{opacity:0}74%,100%{opacity:1}}
+</style>
+</head>
+<body>
+<main>
+
+<div class="rh"><span>Hedgehog _ API _ v1</span>
+ <nav><a href="/docs">REST reference</a><a href="#connect">MCP</a><a href="#ref">Endpoints</a></nav></div>
+
+<h1>Your Hedgehog Camp account, as an API</h1>
+<p class="dek">Read and trade your StockTrak game account from Claude, scripts and any MCP or REST client. No sign-up: one bookmark creates your key, and every call runs in your own open StockTrak tab.</p>
+
+<span class="ex">Exhibit 1</span>
+<div class="exh">Each request runs in your StockTrak tab; nothing is stored about your account.</div>
+<svg class="anim x1" viewBox="0 0 680 58" role="img" aria-label="Client sends a request with your key to hg.voitta.ai, which runs it in your StockTrak tab and returns the answer.">
+ <rect class="ink" x="10" y="10" width="170" height="38"/><text class="ts" x="20" y="23" letter-spacing="1">CLIENT</text><text class="tb" x="20" y="38">Claude · scripts · MCP</text>
+ <rect class="ink" x="255" y="10" width="170" height="38"/><text class="ts" x="265" y="23" letter-spacing="1">HG.VOITTA.AI</text><text class="tb" x="265" y="38">REST /v1 · MCP /mcp</text>
+ <rect class="ink" x="500" y="10" width="170" height="38"/><text class="ts" x="510" y="23" letter-spacing="1">YOUR BROWSER</text><text class="tb" x="510" y="38">StockTrak tab + panel</text>
+ <line class="dash" x1="180" y1="29" x2="255" y2="29"/><line class="dash" x1="425" y1="29" x2="500" y2="29"/>
+ <text class="ts" x="190" y="23">Bearer key</text><text class="ts" x="433" y="23">tab link</text>
+ <circle class="req cyf" cx="182" cy="29" r="3"/><circle class="res" cx="498" cy="29" r="3" fill="var(--ink)"/>
+</svg>
+<p class="cap"><b>Note:</b> Keep the tab open and logged in to StockTrak; with no tab, calls return <code>tab_offline</code>.</p>
+
+<!-- ─────────────── 01 INSTALL ─────────────── -->
+<section id="install">
+ <div class="sh"><span class="n">01</span><h2>Install the bookmark</h2><span class="sub">once per browser</span></div>
+ <div class="bms">
+  <div class="bm-row"><a id=bm-regular class="bm" href="{{BM_REGULAR}}" draggable="true" title="Drag to your bookmarks bar">🦔 Hedgehog</a>
+   <span class="what"><b>Regular.</b> StockTrak and most sites.</span><button type="button" class="copy" data-copy=bm-regular>Copy</button></div>
+  <div class="bm-row"><a id=bm-salesforce class="bm sf" href="{{BM_SF}}" draggable="true" title="Drag to your bookmarks bar">🦔 Hedgehog (Salesforce)</a>
+   <span class="what"><b>Strict sites.</b> Opens a small window; keep it open.</span><button type="button" class="copy" data-copy=bm-salesforce>Copy</button></div>
+ </div>
+ <div id="tip" hidden>Don't click it here: drag it to your bookmarks bar, or Copy it into a new bookmark, then click it on app.stocktrak.com.</div>
+
+ <div class="grid">
+  <div>
+   <div class="tabs" role="tablist" data-tabs="install">
+    <button type="button" role="tab" aria-selected="true" aria-controls="i-drag" id="t-drag">Drag to bookmarks bar</button>
+    <button type="button" role="tab" aria-selected="false" aria-controls="i-mgr" id="t-mgr">Add in bookmark manager</button>
+   </div>
+   <div class="panel" id="i-drag" role="tabpanel" aria-labelledby="t-drag">
+    <ol class="steps">
+     <li>Show the bookmarks bar (shortcut below).</li>
+     <li>Drag <b>🦔 Hedgehog</b> from this page onto the bar and let go.</li>
+     <li>Open <a href="https://app.stocktrak.com">app.stocktrak.com</a>, log in, click the bookmark. The panel shows your key.</li>
+    </ol>
+   </div>
+   <div class="panel" id="i-mgr" role="tabpanel" aria-labelledby="t-mgr" hidden>
+    <ol class="steps">
+     <li>Click <b>Copy</b> next to the bookmark above.</li>
+     <li>Open the bookmark manager (shortcut below) and choose <b>Add new bookmark</b> (Chrome: ⋮ menu · Firefox: Organize).</li>
+     <li>Name: <b>Hedgehog</b>. URL: paste. Save, then click it on app.stocktrak.com.</li>
+    </ol>
+    <p class="note">Safari has no “add”: bookmark any page (<kbd>⌘D</kbd>), then right-click it → <b>Edit Address</b> and paste.</p>
+   </div>
+   <table aria-label="Keyboard shortcuts" style="margin-top:8px">
+    <thead><tr><th>Browser</th><th>Show bookmarks bar</th><th>Bookmark manager</th></tr></thead>
+    <tbody>
+     <tr><td>Chrome</td><td><kbd>⇧⌘B</kbd> · <kbd>Ctrl ⇧ B</kbd></td><td><kbd>⌥⌘B</kbd> · <kbd>Ctrl ⇧ O</kbd></td></tr>
+     <tr><td>Edge</td><td><kbd>⇧⌘B</kbd> · <kbd>Ctrl ⇧ B</kbd></td><td><kbd>Ctrl ⇧ O</kbd></td></tr>
+     <tr><td>Firefox</td><td><kbd>⇧⌘B</kbd> · <kbd>Ctrl ⇧ B</kbd></td><td><kbd>⇧⌘O</kbd> · <kbd>Ctrl ⇧ O</kbd></td></tr>
+     <tr><td>Safari</td><td><kbd>⇧⌘B</kbd></td><td><kbd>⌥⌘B</kbd></td></tr>
+    </tbody>
+   </table>
+  </div>
+  <div class="side">
+   <svg class="anim a-drag" data-for="i-drag" viewBox="0 0 260 132" role="img" aria-label="A cursor drags the Hedgehog button up onto the bookmarks bar.">
+    <rect class="win" x="1" y="1" width="258" height="130" rx="3"/>
+    <rect class="chrome" x="1.5" y="1.5" width="257" height="13"/>
+    <circle class="dot" cx="8" cy="8" r="1.8"/><circle class="dot" cx="14" cy="8" r="1.8"/><circle class="dot" cx="20" cy="8" r="1.8"/>
+    <rect class="fill" x="30" y="4.5" width="150" height="7" rx="3.5"/><text class="ts" x="36" y="10">hg.voitta.ai</text>
+    <line class="ln" x1="1" y1="29" x2="259" y2="29"/>
+    <text class="ts" x="7" y="24">★ News</text><text class="ts" x="36" y="24">★ Docs</text>
+    <g class="drop"><rect class="chip" x="66" y="17" width="54" height="10" rx="1.5"/><text class="t" x="70" y="24.5">🦔 Hedgehog</text></g>
+    <rect class="fill" x="12" y="40" width="120" height="5"/><rect class="fill" x="12" y="50" width="170" height="3"/><rect class="fill" x="12" y="57" width="150" height="3"/>
+    <text class="ts" x="12" y="80">Drag me to the bar</text>
+    <rect class="chip" x="138" y="90" width="62" height="13" rx="1.5"/><text class="t" x="143" y="99">🦔 Hedgehog</text>
+    <path class="trail dash" d="M150 90 C 138 62, 104 40, 94 28"/>
+    <g class="hint"><circle cx="169" cy="96.5" r="9" fill="none" stroke="var(--cy)" stroke-width="1"/></g>
+    <g class="ghost"><rect class="chip cyw" x="138" y="90" width="62" height="13" rx="1.5" opacity=".9"/><text class="t" x="143" y="99">🦔 Hedgehog</text>
+     <path class="cur" transform="translate(166 95)" d="M0 0 L0 10 L2.8 7.6 L5 12.2 L6.6 11.5 L4.5 7 L8.2 7 Z"/></g>
+   </svg>
+   <svg class="anim a-mgr" data-for="i-mgr" viewBox="0 0 260 132" role="img" aria-label="Bookmark manager: Add new bookmark, name Hedgehog, paste the URL, save." hidden>
+    <rect class="win" x="1" y="1" width="258" height="130" rx="3"/>
+    <rect class="chrome" x="1.5" y="1.5" width="257" height="13"/>
+    <circle class="dot" cx="8" cy="8" r="1.8"/><circle class="dot" cx="14" cy="8" r="1.8"/><circle class="dot" cx="20" cy="8" r="1.8"/>
+    <text class="ts" x="30" y="10">Bookmarks</text>
+    <line class="ln" x1="64" y1="14" x2="64" y2="131"/>
+    <text class="ts" x="8" y="28">▾ Bookmarks bar</text><text class="ts" x="8" y="40">  Other</text>
+    <text class="t" x="72" y="28">★ News</text><text class="t" x="72" y="40">★ Docs</text>
+    <g class="newrow"><rect class="cyw" x="68" y="44" width="120" height="10"/><text class="t" x="72" y="51.5">🦔 Hedgehog</text></g>
+    <text class="tb" x="236" y="24">⋮</text>
+    <g class="menu"><rect class="win" x="168" y="26" width="84" height="26"/><rect class="cyw" x="169" y="28" width="82" height="10"/>
+     <text class="t" x="173" y="35.5">Add new bookmark</text><text class="ts" x="173" y="47">Add new folder</text></g>
+    <g class="dlg"><rect class="win" x="54" y="36" width="160" height="78" stroke="var(--ink)"/>
+     <text class="tb" x="62" y="48">Add bookmark</text>
+     <text class="ts" x="62" y="60">Name</text><rect class="win" x="62" y="62" width="144" height="11"/>
+     <text class="t" x="65" y="70">Hedgehog</text><rect class="cov c1" x="64" y="63" width="140" height="9"/>
+     <text class="ts" x="62" y="83">URL</text><rect class="win" x="62" y="85" width="144" height="11"/>
+     <text class="tm" x="65" y="93">javascript:(()=&gt;{if(window.__v…</text><rect class="cov c2" x="64" y="86" width="140" height="9"/>
+     <rect class="cyf" x="166" y="99" width="40" height="11"/><text class="t tw" x="177" y="106.5">Save</text>
+     <rect class="press" x="166" y="99" width="40" height="11" fill="var(--ink)" opacity=".25"/></g>
+    <path class="cur" d="M0 0 L0 10 L2.8 7.6 L5 12.2 L6.6 11.5 L4.5 7 L8.2 7 Z"/>
+   </svg>
+  </div>
+ </div>
+</section>
+
+<!-- ─────────────── 02 CONNECT ─────────────── -->
+<section id="connect">
+ <div class="sh"><span class="n">02</span><h2>Connect Claude and other tools</h2><span class="sub">your key is in the panel on StockTrak</span></div>
+ <div class="grid">
+  <div>
+   <div class="tabs" role="tablist" data-tabs="connect">
+    <button type="button" role="tab" aria-selected="true" aria-controls="c-cd" id="t-cd">Claude Desktop</button>
+    <button type="button" role="tab" aria-selected="false" aria-controls="c-cc" id="t-cc">Claude Code</button>
+    <button type="button" role="tab" aria-selected="false" aria-controls="c-rs" id="t-rs">REST · scripts</button>
+    <button type="button" role="tab" aria-selected="false" aria-controls="c-mc" id="t-mc">Other MCP clients</button>
+   </div>
+   <div class="panel" id="c-cd" role="tabpanel" aria-labelledby="t-cd">
+    <ol class="steps">
+     <li>In the panel on StockTrak: <b>Connect → Claude Desktop → ⬇ Download</b>.</li>
+     <li>Double-click <b>Hedgehog.mcpb</b>; Claude Desktop shows <b>Install</b>. Click it.</li>
+     <li>Ask Claude, e.g. “What's my buying power?”. Keep the StockTrak tab open.</li>
+    </ol>
+    <p class="note">No JSON, no Node.js. New key after Regenerate? Download again: it installs over the old one.</p>
+   </div>
+   <div class="panel" id="c-cc" role="tabpanel" aria-labelledby="t-cc" hidden>
+    <ol class="steps"><li>Copy your key from the panel.</li><li>Run once in a terminal:</li></ol>
+    <div class="code"><button type="button" class="copy" data-copy-text="cc">Copy</button>
+     <pre id="cc">claude mcp add --transport http hedgehog {{BASE}}/mcp/ \
+  --header "Authorization: Bearer <span class="k">hgk_…</span>"</pre></div>
+    <p class="note">Then start <code>claude</code> and ask about your account. 21 Hedgehog tools; orders need a <code>trade_note</code>.</p>
+   </div>
+   <div class="panel" id="c-rs" role="tabpanel" aria-labelledby="t-rs" hidden>
+    <div class="code"><button type="button" class="copy" data-copy-text="rs1">Copy</button>
+     <pre id="rs1">curl -H "Authorization: Bearer <span class="k">hgk_…</span>" {{BASE}}/v1/account</pre></div>
+    <div class="code"><button type="button" class="copy" data-copy-text="rs2">Copy</button>
+     <pre id="rs2">import requests
+H = {"Authorization": "Bearer <span class="k">hgk_…</span>"}
+requests.post("{{BASE}}/v1/orders", headers=H, json={
+  "symbol": "SPY", "side": "buy", "quantity": 10,
+  "trade_note": "Rebalance into the index"}).json()</pre></div>
+    <p class="note">JSON in, JSON out. Errors are always <code>{"error": {"code", "message", "retryable"}}</code>. Full reference: <a href="/docs">/docs</a>.</p>
+   </div>
+   <div class="panel" id="c-mc" role="tabpanel" aria-labelledby="t-mc" hidden>
+    <p class="note" style="margin-top:0">Cursor, Windsurf and any client that supports remote MCP (Streamable HTTP) with headers:</p>
+    <div class="code"><button type="button" class="copy" data-copy-text="mc">Copy</button>
+     <pre id="mc">{"mcpServers": {"hedgehog": {
+  "url": "{{BASE}}/mcp/",
+  "headers": {"Authorization": "Bearer <span class="k">hgk_…</span>"}}}}</pre></div>
+    <p class="note">Clients that only run local servers: wrap it with <code>npx mcp-remote {{BASE}}/mcp/ --header "Authorization: Bearer hgk_…"</code>.</p>
+   </div>
+  </div>
+  <div class="side">
+   <svg class="anim a-cd" data-for="c-cd" viewBox="0 0 260 132" role="img" aria-label="Double-click Hedgehog.mcpb, then click Install in Claude Desktop.">
+    <path class="ink" d="M14 34 h24 l8 8 v32 h-32 z M38 34 v8 h8"/><text class="ts" x="18" y="64">.mcpb</text>
+    <circle class="ring" cx="30" cy="54" r="14" fill="none" stroke="var(--cy)"/>
+    <text class="t" x="6" y="86">Hedgehog.mcpb</text>
+    <g class="dlg"><rect class="win" x="84" y="14" width="170" height="104" rx="3"/>
+     <rect class="chrome" x="84.5" y="14.5" width="169" height="12"/><text class="ts" x="92" y="22.5">Claude Desktop</text>
+     <text class="tb" x="94" y="44">Install Hedgehog (StockTrak)?</text>
+     <text class="ts" x="94" y="56">Voitta · connects to hg.voitta.ai</text>
+     <rect class="win" x="150" y="88" width="40" height="13"/><text class="t" x="159" y="96.5">Cancel</text>
+     <g class="inst"><rect class="cyf" x="196" y="88" width="50" height="13"/><text class="t tw" x="208" y="96.5">Install</text></g>
+     <g class="done"><rect class="win" x="196" y="88" width="50" height="13" stroke="var(--cy)"/><text class="t tc" x="201" y="96.5">✓ Installed</text></g>
+     <g class="ask"><line class="ln" x1="94" y1="108" x2="246" y2="108"/><text class="ts" x="94" y="116">Ask: “What's my buying power?”</text></g></g>
+    <path class="cur" d="M0 0 L0 10 L2.8 7.6 L5 12.2 L6.6 11.5 L4.5 7 L8.2 7 Z"/>
+   </svg>
+   <svg class="anim a-cc" data-for="c-cc" viewBox="0 0 260 132" role="img" aria-label="Terminal: claude mcp add, then asking Claude, which calls a Hedgehog tool." hidden>
+    <rect class="win" x="1" y="1" width="258" height="130" rx="3"/><rect class="chrome" x="1.5" y="1.5" width="257" height="13"/>
+    <circle class="dot" cx="8" cy="8" r="1.8"/><circle class="dot" cx="14" cy="8" r="1.8"/><circle class="dot" cx="20" cy="8" r="1.8"/><text class="ts" x="30" y="10">Terminal</text>
+    <text class="tm" x="8" y="30"><tspan class="tc">$</tspan> claude mcp add --transport http hedgehog \</text><rect class="cov c1" x="14" y="24" width="242" height="8"/>
+    <text class="tm" x="8" y="40">  hg.voitta.ai/mcp/ --header "Authorization: Bearer hgk_…"</text><rect class="cov c2" x="8" y="34" width="248" height="8"/>
+    <text class="tm o1 tc" x="8" y="54">✓ Added HTTP MCP server hedgehog</text>
+    <text class="tm" x="8" y="74"><tspan class="tc">&gt;</tspan> what's my buying power?</text><rect class="cov c3" x="14" y="68" width="120" height="8"/>
+    <g class="o2"><text class="tm" x="8" y="90">● hedgehog_account <tspan fill="var(--mute)">(MCP)</tspan></text>
+     <text class="tm" x="8" y="102">  Buying power and positions from your tab.</text></g>
+   </svg>
+   <svg class="anim a-rs" data-for="c-rs" viewBox="0 0 260 132" role="img" aria-label="A GET request with your key returns JSON." hidden>
+    <rect class="ink" x="4" y="22" width="92" height="40"/><text class="ts" x="10" y="33" letter-spacing=".8">REQUEST</text>
+    <text class="tm" x="10" y="45">GET /v1/account</text><text class="tm" x="10" y="55">Bearer hgk_…</text>
+    <line class="dash" x1="96" y1="42" x2="164" y2="42"/><circle class="req cyf" cx="98" cy="42" r="2.6"/>
+    <rect class="ink" x="164" y="10" width="92" height="66"/><text class="ts" x="170" y="21" letter-spacing=".8">RESPONSE</text>
+    <text class="tm ok tc" x="214" y="21">200 OK</text>
+    <text class="tm" x="170" y="34">{"summary": {…},</text><rect class="cov r1" x="170" y="28" width="84" height="8"/>
+    <text class="tm" x="170" y="45"> "trades_remaining":</text><rect class="cov r2" x="170" y="39" width="84" height="8"/>
+    <text class="tm" x="170" y="56">   9974, …}</text><rect class="cov r3" x="170" y="50" width="84" height="8"/>
+    <text class="ts" x="4" y="98">Same calls from Python, JS, Sheets,</text><text class="ts" x="4" y="108">n8n or any HTTP client.</text>
+   </svg>
+   <svg class="anim a-mc" data-for="c-mc" viewBox="0 0 260 132" role="img" aria-label="An MCP config file with the Hedgehog URL and your key." hidden>
+    <rect class="win" x="1" y="1" width="258" height="130" rx="3"/><rect class="chrome" x="1.5" y="1.5" width="257" height="13"/><text class="ts" x="8" y="10">mcp.json</text>
+    <text class="tm" x="10" y="32">"hedgehog": {</text><rect class="cov m1" x="10" y="26" width="120" height="8"/>
+    <text class="tm" x="10" y="44">  "url": "https://hg.voitta.ai/mcp/",</text><rect class="cov m2" x="10" y="38" width="200" height="8"/>
+    <text class="tm" x="10" y="56">  "headers": {"Authorization": "Bearer hgk_…"}}</text><rect class="cov m3" x="10" y="50" width="244" height="8"/>
+    <g class="on"><circle class="cyf" cx="14" cy="80" r="3"/><text class="t" x="22" y="82.5">hedgehog · connected · 21 tools</text></g>
+   </svg>
+  </div>
+ </div>
+</section>
+
+<!-- ─────────────── 03 REFERENCE ─────────────── -->
+<section id="ref">
+ <div class="sh"><span class="n">03</span><h2>Endpoints</h2><span class="sub">base <code>{{BASE}}</code> · header <code>Authorization: Bearer hgk_…</code></span></div>
+ <div class="ref">
+  <table><thead><tr><th>Call</th><th>Returns</th></tr></thead><tbody>
+   <tr><td>GET /v1/status</td><td>Tab connected? StockTrak signed in?</td></tr>
+   <tr><td>GET /v1/account</td><td>Cash, buying power, value, trades remaining</td></tr>
+   <tr><td>GET /v1/positions</td><td>Open positions (<code>?security_type=option</code>)</td></tr>
+   <tr><td>GET /v1/orders</td><td>Open orders; <code>?view=history</code> with fills</td></tr>
+   <tr><td>POST /v1/orders</td><td>Place order (<code>trade_note</code> required)</td></tr>
+   <tr><td>POST /v1/orders/preview</td><td>Preview without placing</td></tr>
+  </tbody></table>
+  <table><thead><tr><th>Call</th><th>Returns</th></tr></thead><tbody>
+   <tr><td>DELETE /v1/orders/{id}</td><td>Cancel an open order</td></tr>
+   <tr><td>GET /v1/quotes/{sym}</td><td>Last price</td></tr>
+   <tr><td>GET /v1/options/chain</td><td>Option chain for a symbol</td></tr>
+   <tr><td>GET /v1/history/{report}</td><td>Transactions, trade notes, closed positions</td></tr>
+   <tr><td>GET /v1/rewards/{section}</td><td>H-Tokens: <code>my_standing</code>, <code>my_week</code></td></tr>
+   <tr><td>MCP /mcp/</td><td>21 tools, same rules as REST</td></tr>
+  </tbody></table>
+ </div>
+ <p class="note"><b>Errors:</b> <code>tab_offline</code> 503 · <code>session_expired</code> 409 (log in to StockTrak again) · <code>trading_disabled</code> 403 · <code>rule_violation</code> 422. Full schemas at <a href="/docs">/docs</a>.</p>
+</section>
+
+<div class="foot">
+ <p><b>1.</b> No account: your key is created by the panel and kept in your browser's StockTrak storage. Regenerate in the panel replaces it everywhere at once.</p>
+ <p><b>2.</b> Trading through the API is on by default; switch it off in the panel. Every order still follows the game's rules.</p>
+ <p><b>Source:</b> hg.voitta.ai · Voitta</p>
+</div>
+</main>
+<script>
+(function () {
+  // tabs: show the panel and its matching animation (data-for)
+  document.querySelectorAll('[data-tabs]').forEach(function (list) {
+    var tabs = list.querySelectorAll('[role=tab]');
+    function pick(t) {
+      tabs.forEach(function (x) {
+        var on = x === t, id = x.getAttribute('aria-controls');
+        x.setAttribute('aria-selected', on ? 'true' : 'false');
+        x.tabIndex = on ? 0 : -1;
+        document.getElementById(id).hidden = !on;
+        var a = document.querySelector('svg[data-for="' + id + '"]'); if (a) a.hidden = !on;
+      });
+    }
+    tabs.forEach(function (t, i) {
+      t.addEventListener('click', function () { pick(t); });
+      t.addEventListener('keydown', function (e) {
+        var j = e.key === 'ArrowRight' ? i + 1 : e.key === 'ArrowLeft' ? i - 1 : null;
+        if (j === null) return; var n = tabs[(j + tabs.length) % tabs.length]; pick(n); n.focus();
+      });
+    });
+  });
+  // copy: bookmarklets (href) and code blocks (text)
+  function flash(b, m) { var t = b.textContent; b.textContent = m; setTimeout(function () { b.textContent = t; }, 1400); }
+  function put(b, text) {
+    if (navigator.clipboard && navigator.clipboard.writeText)
+      navigator.clipboard.writeText(text).then(function () { flash(b, 'Copied'); }, function () { flash(b, 'Select & copy'); });
+    else flash(b, 'Select & copy');
+  }
+  document.querySelectorAll('[data-copy]').forEach(function (b) {
+    b.addEventListener('click', function () { put(b, document.getElementById(b.dataset.copy).href); });
+  });
+  document.querySelectorAll('[data-copy-text]').forEach(function (b) {
+    b.addEventListener('click', function () { put(b, document.getElementById(b.dataset.copyText).textContent); });
+  });
+  // a bookmarklet clicked here does nothing useful: say what to do instead
+  document.querySelectorAll('a.bm').forEach(function (a) {
+    a.addEventListener('click', function (e) {
+      e.preventDefault(); var tip = document.getElementById('tip'); tip.hidden = false;
+      setTimeout(function () { tip.hidden = true; }, 5000);
+    });
+  });
+})();
+</script>
+</body>
+</html>

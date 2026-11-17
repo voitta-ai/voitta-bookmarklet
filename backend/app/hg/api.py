@@ -515,89 +515,15 @@ def bridge_bookmarklet(base: str) -> str:
     return js.replace("javascript:(()=>{", "javascript:(()=>{if(window.__voittaHg){window.__voittaHg.show();return}", 1)
 
 
-_BM_JS = """
-document.querySelectorAll('[data-copy]').forEach(function (b) {
-  b.addEventListener('click', function () {
-    var href = document.getElementById(b.dataset.copy).href, done = function (m) {
-      var t = b.textContent; b.textContent = m; setTimeout(function () { b.textContent = t; }, 1600); };
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(href).then(function () { done('Copied ✓'); }, function () { done('Select & copy'); });
-    } else { done('Select & copy'); }
-  });
-});
-document.querySelectorAll('a.bm').forEach(function (a) {
-  a.addEventListener('click', function (e) {
-    e.preventDefault();
-    var tip = document.getElementById('tip'); tip.hidden = false;
-    setTimeout(function () { tip.hidden = true; }, 4000);
-  });
-});
-"""
-
+_LANDING = Path(__file__).with_name("landing.html")
 
 @app.get("/", include_in_schema=False)
 async def landing(request: Request):
     base = _public_base(request)
-    regular = html.escape(bookmarklet(base), quote=True)
-    bridge = html.escape(bridge_bookmarklet(base), quote=True)
-    doc = f"""<!doctype html><html lang=en><meta charset=utf-8>
-<meta name=viewport content="width=device-width,initial-scale=1"><title>Hedgehog API</title>
-<style>
-:root{{--bg:#fff;--fg:#1a1d23;--muted:#5f6673;--border:#d9dde3;--accent:#2563eb;--accent2:#0f766e;--card:#f7f8fa}}
-@media (prefers-color-scheme:dark){{:root{{--bg:#14171c;--fg:#e8eaee;--muted:#9aa1ad;--border:#2c323b;--accent:#3b82f6;--accent2:#14b8a6;--card:#1b1f26}}}}
-body{{margin:0;background:var(--bg);color:var(--fg);font:16px/1.55 system-ui,-apple-system,sans-serif}}
-main{{max-width:720px;margin:0 auto;padding:48px 20px}}
-h1{{font-size:28px;margin:0 0 6px}} .muted{{color:var(--muted)}}
-.bms{{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin:24px 0 8px}}
-@media (max-width:560px){{.bms{{grid-template-columns:1fr}}}}
-.bmcard{{border:1px solid var(--border);border-radius:12px;padding:14px 16px;background:var(--card);display:flex;flex-direction:column;gap:8px}}
-.bmcard h2{{font-size:15px;margin:0}} .bmcard p{{margin:0;font-size:13.5px}}
-.bm{{display:inline-block;align-self:flex-start;padding:10px 18px;border-radius:10px;background:var(--accent);color:#fff;
-  font-weight:700;text-decoration:none;cursor:grab;user-select:none}}
-.bm.sf{{background:var(--accent2)}}
-.row{{display:flex;gap:8px;align-items:center;flex-wrap:wrap}}
-.copy{{font:inherit;font-size:13px;padding:6px 12px;border-radius:8px;border:1px solid var(--border);background:var(--bg);color:var(--fg);cursor:pointer}}
-.tip{{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:8px 12px;font-size:14px}}
-ol{{padding-left:22px}} li{{margin:6px 0}}
-.card{{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-top:22px}}
-code{{font-family:ui-monospace,Menlo,monospace;font-size:13.5px}} a{{color:var(--accent)}}
-</style>
-<main>
-<h1>Hedgehog API</h1>
-<p class=muted>Trade and read your Hedgehog Camp account from Claude Code, scripts and other tools.</p>
-
-<div class=bms>
-  <div class=bmcard>
-    <h2>Regular</h2>
-    <p class=muted>For app.stocktrak.com and most sites. Loads right into the page.</p>
-    <div class=row>
-      <a id=bm-regular class=bm href="{regular}" draggable=true title="Drag to your bookmarks bar">🦔 Hedgehog</a>
-      <button type=button class=copy data-copy=bm-regular>Copy</button>
-    </div>
-  </div>
-  <div class=bmcard>
-    <h2>Salesforce</h2>
-    <p class=muted>For strict sites (Salesforce and the like) where Regular is blocked. Opens a small Hedgehog window; keep it open.</p>
-    <div class=row>
-      <a id=bm-salesforce class="bm sf" href="{bridge}" draggable=true title="Drag to your bookmarks bar">🦔 Hedgehog (Salesforce)</a>
-      <button type=button class=copy data-copy=bm-salesforce>Copy</button>
-    </div>
-  </div>
-</div>
-<div id=tip class=tip hidden>Don't click it here: <b>drag</b> it to your bookmarks bar (or <b>Copy</b> and paste it as a new bookmark's URL), then click it on app.stocktrak.com.</div>
-
-<ol>
-<li><b>Drag</b> a button to your browser's bookmarks bar, or <b>Copy</b> it and paste it as the URL of a new bookmark.</li>
-<li>Open <a href="https://app.stocktrak.com">app.stocktrak.com</a> and log in.</li>
-<li>Click the bookmark. The panel shows your <b>API key</b> and how to connect Claude Code, Claude Desktop or any REST client.</li>
-<li>Keep that StockTrak tab open: every API call runs in it.</li>
-</ol>
-<div class=card>
-<b>Docs:</b> <a href="/docs">REST API reference</a> · MCP endpoint <code>{html.escape(base)}/mcp/</code><br>
-<span class=muted>No sign-up: your key lives in your browser. Trading through the API is on by default; switch it off in the panel.</span>
-</div>
-</main>
-<script>{_BM_JS}</script></html>"""
+    doc = (_LANDING.read_text(encoding="utf-8")
+           .replace("{{BM_REGULAR}}", html.escape(bookmarklet(base), quote=True))
+           .replace("{{BM_SF}}", html.escape(bridge_bookmarklet(base), quote=True))
+           .replace("{{BASE}}", html.escape(base, quote=True)))
     return HTMLResponse(doc, headers={
         "Cache-Control": "no-store", "X-Frame-Options": "DENY",
         "Content-Security-Policy": ("default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; "
