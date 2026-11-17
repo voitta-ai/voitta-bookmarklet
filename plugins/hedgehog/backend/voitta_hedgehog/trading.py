@@ -58,6 +58,16 @@ async def confirm_with_user(ctx: ToolCtx, question: str, header: str = "Order") 
 
     Also asks when "don't ask" is on if the StockTrak session dropped since the last confirmation:
     the first order after a logout always needs a fresh yes."""
+    try:
+        from app.hg import runner as _hg
+
+        if _hg.active():
+            # hg.voitta.ai API: there's no chat to ask in; the key's "allow trading" switch is the
+            # consent (checked by trading_enabled before any order tool runs).
+            clear_session_break(ctx)
+            return None
+    except ImportError:
+        pass
     if not confirm_orders() and last_session_break(ctx) is None:
         return None
     try:

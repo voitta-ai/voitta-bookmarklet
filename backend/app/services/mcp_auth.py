@@ -30,7 +30,7 @@ _caller: ContextVar[Caller | None] = ContextVar("voitta_mcp_caller", default=Non
 def bearer(headers: Mapping[Any, Any]) -> str | None:
     """The bearer token from ``Authorization`` (str or bytes headers), or None."""
     raw = headers.get("authorization")
-    if raw is None:
+    if raw is None and isinstance(headers, dict):  # raw ASGI header dicts use bytes keys
         raw = headers.get(b"authorization")
     if isinstance(raw, bytes):
         raw = raw.decode("latin-1")

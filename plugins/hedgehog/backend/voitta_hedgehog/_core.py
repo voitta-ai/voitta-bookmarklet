@@ -442,7 +442,18 @@ def now_et_iso(ctx: Any = None) -> str:
 
 
 def setting(key: str, default: Any = None) -> Any:
-    """Read plugins.hedgehog.<key> (canonical, written by the Settings panel)."""
+    """Read plugins.hedgehog.<key> (canonical, written by the Settings panel).
+
+    On hg.voitta.ai the caller is an API key, not an account: its settings come from the key
+    (app.hg.runner) and the server's settings file is never read."""
+    try:
+        from app.hg import runner as _hg
+
+        if _hg.active():
+            hit, value = _hg.plugin_setting(PLUGIN, key)
+            return value if hit else default
+    except ImportError:
+        pass
     try:
         blob = user_settings.read()
     except Exception:

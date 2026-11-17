@@ -80,12 +80,19 @@ async def _lifespan(_app: FastAPI):
         except Exception:
             logging.getLogger(__name__).exception("model-catalog warm-up failed")
 
+    from contextlib import AsyncExitStack
+
     try:
-        if _mcp_asgi is not None and hasattr(_mcp_asgi, "router"):
-            async with _mcp_asgi.router.lifespan_context(_app):
-                await _startup_tasks()
-                yield
-        else:
+        async with AsyncExitStack() as stack:
+            if _mcp_asgi is not None and hasattr(_mcp_asgi, "router"):
+                await stack.enter_async_context(_mcp_asgi.router.lifespan_context(_app))
+            # hg.voitta.ai's own MCP transport (app.hg.mcp) needs its task group too.
+            try:
+                from app.hg import mcp as _hg_mcp
+
+                await stack.enter_async_context(_hg_mcp.asgi().router.lifespan_context(_app))
+            except Exception:
+                logging.getLogger(__name__).exception("hg MCP lifespan failed; hg /mcp unavailable")
             await _startup_tasks()
             yield
     finally:
@@ -1577,3 +1584,11 @@ async def serve_frontend(full_path: str) -> FileResponse:
     if index.is_file():
         return FileResponse(str(index), headers=_NO_CACHE)
     return FileResponse(str(_FE_DIST / "widget.js"), headers=_NO_CACHE)
+
+
+# ── hg.voitta.ai fence (OUTERMOST layer — keep this the last add_middleware in the file) ──
+# Requests for an hg host go to the hg app (app.hg.api + its /mcp) and never reach anything above:
+# not the chat, /api, the main /mcp, the auth guard's world, or the widget. See app.hg.host.
+from app.hg.host import HgHostFence as _HgHostFence  # noqa: E402
+
+app.add_middleware(_HgHostFence)

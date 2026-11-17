@@ -22,12 +22,20 @@ def _isolated_users_and_loopback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     check, which otherwise (correctly) refuses non-loopback Hosts."""
     from app.services import passwords, site_check, users
 
+    from app.hg import link as hg_link
+    from app.hg import store as hg_store
+
     monkeypatch.setattr(users, "db_path", lambda: tmp_path / "users.sqlite")
+    monkeypatch.setattr(hg_store, "db_path", lambda: tmp_path / "hg.sqlite")
     monkeypatch.setattr(passwords, "N", 2**10)
     monkeypatch.setattr(site_check, "LOOPBACK_HOSTS", site_check.LOOPBACK_HOSTS | {"testserver"})
     users.reset_for_tests()
+    hg_store.reset_for_tests()
+    hg_link.reset_for_tests()
     yield
     users.reset_for_tests()
+    hg_store.reset_for_tests()
+    hg_link.reset_for_tests()
 
 
 @pytest.fixture
