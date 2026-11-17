@@ -154,6 +154,26 @@ async def regenerate_key(request: Request):
     return {"key": key, **info}
 
 
+@app.post("/hg/claude-desktop.mcpb", include_in_schema=False)
+async def claude_desktop_extension(request: Request):
+    """The one-click Claude Desktop extension for this key. POST with ``Authorization: Bearer`` (the
+    panel fetches it and saves the file) — a key never goes in a URL."""
+    from app.hg import claude_desktop
+
+    row = _key_row(request)
+    if row is None:
+        return _err("unauthorized", _UNAUTH)
+    from app.services.mcp_auth import bearer
+
+    data, version = claude_desktop.build(bearer(request.headers), f"{_public_base(request)}/mcp/")
+    store.log(row["id"], "panel", "claude_desktop_download", True)
+    return Response(data, media_type="application/octet-stream", headers={
+        "Content-Disposition": 'attachment; filename="Hedgehog.mcpb"',
+        "Cache-Control": "no-store",
+        "X-Extension-Version": version,
+    })
+
+
 @app.get("/hg/me", include_in_schema=False)
 async def me(request: Request):
     row = _key_row(request)

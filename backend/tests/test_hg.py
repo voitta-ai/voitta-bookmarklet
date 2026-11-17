@@ -370,3 +370,122 @@ def test_hg_bridge_is_hg_only_not_the_main_one(hg):
     relay = hg.get("/bridge/relay.js").text
     assert "approveThenBoot();\n      return;" not in relay
     assert 'BACKEND + "/widget.js"' not in hg.get("/bridge/boot.js").text
+
+
+# ── Claude Desktop extension (.mcpb) ─────────────────────────────────────
+
+
+def _mcpb(hg, key):
+    import io
+    import zipfile
+
+    r = hg.post("/hg/claude-desktop.mcpb", headers=_auth(key))
+    assert r.status_code == 200, r.text
+    assert 'filename="Hedgehog.mcpb"' in r.headers["content-disposition"]
+    z = zipfile.ZipFile(io.BytesIO(r.content))
+    return z, json.loads(z.read("manifest.json"))
+
+
+def test_mcpb_needs_the_key_in_a_header(hg):
+    assert hg.post("/hg/claude-desktop.mcpb").status_code == 401
+    assert hg.get("/hg/claude-desktop.mcpb").status_code == 405  # never a GET link with the key in it
+
+
+def test_mcpb_manifest_follows_the_spec(hg):
+    key = _key(hg)
+    z, m = _mcpb(hg, key)
+    assert set(z.namelist()) == {"manifest.json", "server/index.js"}
+    for field in ("manifest_version", "name", "version", "description", "author", "server"):
+        assert field in m, field
+    assert m["manifest_version"] == "0.3" and m["author"]["name"]
+    s = m["server"]
+    assert s["type"] == "node" and s["entry_point"] == "server/index.js"
+    assert s["mcp_config"]["command"] == "node" and s["mcp_config"]["args"] == ["${__dirname}/server/index.js"]
+    assert s["mcp_config"]["env"] == {"HG_URL": "https://hg.voitta.ai/mcp/", "HG_KEY": key}
+
+
+def test_a_new_download_replaces_the_installed_one(hg):
+    """Same name, higher version: Claude Desktop upgrades in place, so the new key replaces the old."""
+    key = _key(hg)
+    _, first = _mcpb(hg, key)
+    time.sleep(1.1)
+    new = hg.post("/hg/keys/regenerate", headers=_auth(key)).json()["key"]
+    _, second = _mcpb(hg, new)
+    assert first["name"] == second["name"] == "hedgehog"
+
+    def semver(v):
+        return tuple(int(x) for x in v.split("."))
+
+    assert semver(second["version"]) > semver(first["version"])
+    assert second["server"]["mcp_config"]["env"]["HG_KEY"] == new
+    assert hg.post("/hg/claude-desktop.mcpb", headers=_auth(key)).status_code == 401  # old key is dead
+
+
+def test_mcpb_bridge_runs_like_claude_desktop(tmp_path):
+    """Unpack the real .mcpb and run its server/index.js with Node, speaking MCP over stdio, against a
+    live hg server on a free port — the way Claude Desktop runs it."""
+    import io
+    import shutil
+    import socket
+    import subprocess
+    import zipfile
+
+    import uvicorn
+
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node not installed")
+
+    port = socket.socket()
+    port.bind(("127.0.0.1", 0))
+    p = port.getsockname()[1]
+    port.close()
+    # The real app (its startup enters the hg MCP transport); an hg Host reaches the hg app.
+    import os
+
+    os.environ["VOITTA_HG_HOSTS"] = "127.0.0.1"
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=p, log_level="error"))
+    th = threading.Thread(target=server.run, daemon=True)
+    th.start()
+    for _ in range(100):
+        if server.started:
+            break
+        time.sleep(0.05)
+    try:
+        base = f"http://127.0.0.1:{p}"
+        key = store.mint("127.0.0.1")[0]
+        from app.hg import claude_desktop
+
+        data, _ = claude_desktop.build(key, f"{base}/mcp/")
+        zipfile.ZipFile(io.BytesIO(data)).extractall(tmp_path)
+        m = json.loads((tmp_path / "manifest.json").read_text())
+        cfg = m["server"]["mcp_config"]
+        args = [a.replace("${__dirname}", str(tmp_path)) for a in cfg["args"]]
+        proc = subprocess.Popen([node, *args], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                text=True, env={"PATH": "/usr/bin:/bin", **cfg["env"]})
+
+        def rpc(i, method, params=None):
+            proc.stdin.write(json.dumps({"jsonrpc": "2.0", "id": i, "method": method, "params": params or {}}) + "\n")
+            proc.stdin.flush()
+            return json.loads(proc.stdout.readline())
+
+        init = rpc(1, "initialize", {"protocolVersion": "2025-06-18", "capabilities": {},
+                                      "clientInfo": {"name": "claude-desktop-sim", "version": "0"}})
+        assert init["result"]["serverInfo"]["name"] == "hedgehog"
+        proc.stdin.write(json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}) + "\n")
+        proc.stdin.flush()
+        tools = rpc(2, "tools/list")["result"]["tools"]
+        assert {t["name"] for t in tools} == set(runner.tool_names())
+        res = rpc(3, "tools/call", {"name": "hedgehog_account", "arguments": {}})["result"]
+        assert res["isError"] is True and "tab_offline" in res["content"][0]["text"]  # no tab here: honest error
+
+        # a regenerated key: the old extension reports it clearly instead of hanging
+        store.regenerate(key)
+        err = rpc(4, "tools/list")
+        assert "regenerated or revoked" in err["error"]["message"]
+        proc.stdin.close()
+        proc.wait(10)
+    finally:
+        server.should_exit = True
+        th.join(10)
+        os.environ.pop("VOITTA_HG_HOSTS", None)

@@ -89,20 +89,8 @@ function snippets(key: string): { id: string; label: string; text: string; note:
     {
       id: "claude-desktop",
       label: "Claude Desktop",
-      note: "Settings → Developer → Edit Config, add this, restart Claude Desktop (needs Node.js).",
-      text: JSON.stringify(
-        {
-          mcpServers: {
-            hedgehog: {
-              command: "npx",
-              args: ["-y", "mcp-remote", `${BASE}/mcp/`, "--header", "Authorization:${HG_AUTH}"],
-              env: { HG_AUTH: `Bearer ${key}` },
-            },
-          },
-        },
-        null,
-        2,
-      ),
+      note: "",
+      text: "", // rendered as a download button (DesktopInstall), not a snippet
     },
     {
       id: "rest",
@@ -111,6 +99,64 @@ function snippets(key: string): { id: string; label: string; text: string; note:
       text: `curl -H "Authorization: Bearer ${key}" ${BASE}/v1/account`,
     },
   ];
+}
+
+// Claude Desktop: a one-click extension (.mcpb) with this key inside. Fetched with the key in a
+// header (never in a URL), then saved as a file the user double-clicks. A new download always has a
+// higher version, so after Regenerate it installs over the old one and replaces the key.
+function DesktopInstall({ apiKey, regenerated }: { apiKey: string; regenerated: boolean }) {
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function download() {
+    setBusy(true);
+    setErr(null);
+    try {
+      const r = await fetch(`${BASE}/hg/claude-desktop.mcpb`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${apiKey}` },
+        credentials: "omit",
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const blob = await r.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "Hedgehog.mcpb";
+      a.style.display = "none";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 30_000);
+      setDone(true);
+    } catch (e) {
+      setErr(`Download failed: ${(e as Error).message}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="desk">
+      {regenerated && (
+        <div className="desk-warn">Your key changed: download and install again to update Claude Desktop.</div>
+      )}
+      <button type="button" className="pbtn" onClick={download} disabled={busy}>
+        {busy ? "Preparing…" : "⬇ Download for Claude Desktop"}
+      </button>
+      <ol className="steps">
+        <li>Open the downloaded <b>Hedgehog.mcpb</b> (double-click it).</li>
+        <li>Claude Desktop shows <b>Install</b>: click it.</li>
+        <li>Ask Claude about your Hedgehog account. Keep this StockTrak tab open.</li>
+      </ol>
+      <div className="muted small">
+        Your key is inside the file, so keep it private. Downloading again installs over the old one.
+      </div>
+      {done && <div className="note">Downloaded. Open it to install.</div>}
+      {err && <div className="err">{err}</div>}
+    </div>
+  );
 }
 
 function Switch({ on, label, sub, onChange }: { on: boolean; label: string; sub: string; onChange: (v: boolean) => void }) {
@@ -137,6 +183,7 @@ function Panel({ onHide }: { onHide: () => void }) {
   const [show, setShow] = useState(false);
   const [tab, setTab] = useState("claude-code");
   const [confirmRegen, setConfirmRegen] = useState(false);
+  const [regenerated, setRegenerated] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
@@ -222,7 +269,9 @@ function Panel({ onHide }: { onHide: () => void }) {
       setKey(r.key);
       setConfirmRegen(false);
       setShow(true);
-      setNote("New key. The old one stopped working: update Claude Code / your scripts.");
+      setRegenerated(true);
+      setTab("claude-desktop");
+      setNote("New key. The old one stopped working: update Claude Code / your scripts, and reinstall Claude Desktop.");
     } catch (e) {
       setErr((e as Error).message);
     }
@@ -333,7 +382,8 @@ function Panel({ onHide }: { onHide: () => void }) {
               </button>
             ))}
           </div>
-          {active && (
+          {active && active.id === "claude-desktop" && key && <DesktopInstall apiKey={key} regenerated={regenerated} />}
+          {active && active.id !== "claude-desktop" && (
             <>
               <pre className="snip">{active.text}</pre>
               <div className="row">
@@ -413,6 +463,12 @@ section{display:flex;flex-direction:column;gap:6px}
 .act{display:grid;grid-template-columns:64px 1fr 34px auto;gap:6px;padding:2px 0;border-bottom:1px solid var(--voitta-border)}
 .act .when,.act .via{color:var(--voitta-text-muted)}.act.fail .res{color:var(--voitta-error-fg)}
 .note{font-size:12px;color:var(--voitta-ok-fg)}.err{font-size:12px;color:var(--voitta-error-fg)}
+.desk{display:flex;flex-direction:column;gap:8px;padding:10px;border:1px solid var(--voitta-border);border-radius:8px;background:var(--voitta-surface)}
+.pbtn{align-self:flex-start;background:var(--voitta-accent);border:1px solid var(--voitta-accent);color:var(--voitta-accent-fg);
+ border-radius:8px;padding:8px 14px;font:inherit;font-weight:700;cursor:pointer}
+.pbtn:disabled{opacity:.6;cursor:default}
+.steps{margin:0;padding-left:18px;font-size:12.5px}.steps li{margin:2px 0}
+.desk-warn{font-size:12px;padding:6px 8px;border-radius:6px;background:var(--voitta-warn-bg);border:1px solid var(--voitta-warn-border);color:var(--voitta-warn-fg)}
 .pill{position:fixed;right:14px;bottom:14px;pointer-events:auto;z-index:2147483647;background:var(--voitta-bg);color:var(--voitta-text);
  border:1px solid var(--voitta-border);border-radius:999px;padding:6px 12px;font:600 13px system-ui,sans-serif;cursor:pointer;box-shadow:var(--voitta-shadow)}
 `;
