@@ -501,12 +501,12 @@ def bookmarklet(base: str) -> str:
     StockTrak: connect-src https: + 'unsafe-eval')."""
     js = ("(()=>{if(window.__voittaHg){window.__voittaHg.show();return}"
           f"fetch('{base}/hg/panel.js').then(r=>r.text()).then(c=>{{window.__voittaHgBase='{base}';(0,eval)(c)}})"
-          ".catch(e=>alert('Hedgehog panel failed to load ('+e+'). Try the Salesforce bookmarklet.'))})()")
+          ".catch(e=>alert('Hedgehog panel failed to load ('+e+'). Try the Enhanced bookmark from hg.voitta.ai.'))})()")
     return "javascript:" + js
 
 
 def bridge_bookmarklet(base: str) -> str:
-    """Salesforce-style pages whose CSP blocks loading/reaching hg: open the Hedgehog bridge window
+    """Enhanced (restrictive setups where the page can't load or reach hg): open the Hedgehog bridge window
     on hg and run the panel through it (app.bridge mechanics; hg's /bridge serves the hg panel)."""
     from app.bookmarklets import bridge_bookmarklet as main_bridge
 
@@ -516,13 +516,31 @@ def bridge_bookmarklet(base: str) -> str:
 
 
 _LANDING = Path(__file__).with_name("landing.html")
+_LOGO = Path(__file__).with_name("logo.png")
+_FAVICON = Path(__file__).with_name("favicon.png")
+
+
+def _png(p: Path) -> Response:
+    return Response(p.read_bytes(), media_type="image/png", headers={"Cache-Control": "public, max-age=86400"})
+
+
+@app.get("/logo.png", include_in_schema=False)
+async def logo():
+    return _png(_LOGO)
+
+
+@app.get("/favicon.png", include_in_schema=False)
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    return _png(_FAVICON)
+
 
 @app.get("/", include_in_schema=False)
 async def landing(request: Request):
     base = _public_base(request)
     doc = (_LANDING.read_text(encoding="utf-8")
            .replace("{{BM_REGULAR}}", html.escape(bookmarklet(base), quote=True))
-           .replace("{{BM_SF}}", html.escape(bridge_bookmarklet(base), quote=True))
+           .replace("{{BM_ENHANCED}}", html.escape(bridge_bookmarklet(base), quote=True))
            .replace("{{BASE}}", html.escape(base, quote=True)))
     return HTMLResponse(doc, headers={
         "Cache-Control": "no-store", "X-Frame-Options": "DENY",

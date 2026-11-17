@@ -347,11 +347,11 @@ def test_landing_has_both_bookmarklets_draggable_and_copyable(hg):
 
     page = hg.get("/").text
     links = dict(_re.findall(r'<a id=(bm-\w+)[^>]*href="(javascript:[^"]+)"', page))
-    assert set(links) == {"bm-regular", "bm-salesforce"}
+    assert set(links) == {"bm-regular", "bm-enhanced"}
     for bid in links:
         assert f"data-copy={bid}" in page
     assert "/hg/panel.js" in _html.unescape(links["bm-regular"])
-    assert "/bridge'" in _html.unescape(links["bm-salesforce"])
+    assert "/bridge'" in _html.unescape(links["bm-enhanced"])
 
 
 def test_hg_bridge_serves_the_hg_panel_without_site_approval(hg):
