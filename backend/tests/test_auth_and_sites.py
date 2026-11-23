@@ -70,6 +70,46 @@ def test_classify(headers, query, want):
     assert site_check.classify(_scope(headers, query=query)) == want
 
 
+EXT = "chrome-extension://cgcipboiieipdcbonhefjcgcikliboic"
+
+
+@pytest.mark.parametrize("headers, query, want", [
+    ({"Origin": EXT}, "", ("own", None)),                                  # toolbar popup
+    ({"Origin": EXT, "X-Voitta-Via": GOOD}, "", ("site", GOOD)),           # relayed fetch
+    ({"Origin": EXT}, "voitta_via=" + GOOD, ("site", GOOD)),               # relayed WebSocket
+    ({"Sec-Fetch-Site": "none", "X-Voitta-Via": GOOD}, "", ("site", GOOD)),  # relayed GET: Chrome sends no Origin
+    ({"Origin": EXT, "X-Voitta-Via": OWN}, "", ("own", None)),
+    ({"Origin": EXT, "X-Voitta-Via": "chrome://settings"}, "", ("refuse", "bad relay origin")),
+    ({"Origin": "chrome-extension://" + "a" * 32}, "", ("refuse", "untrusted extension")),
+    ({"Origin": "chrome-extension://" + "a" * 32, "X-Voitta-Via": GOOD}, "", ("refuse", "untrusted extension")),
+])
+def test_classify_extension(headers, query, want):
+    assert site_check.classify(_scope(headers, query=query)) == want
+
+
+def test_trusted_extensions_env(monkeypatch):
+    other = "chrome-extension://" + "b" * 32
+    monkeypatch.setenv("VOITTA_TRUSTED_EXTENSIONS", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb, not-an-id")
+    assert site_check.trusted_extension_origins() == {other}
+    assert site_check.classify(_scope({"Origin": other})) == ("own", None)
+    assert site_check.classify(_scope({"Origin": EXT}))[0] == "refuse"
+    monkeypatch.setenv("VOITTA_TRUSTED_EXTENSIONS", "")
+    assert site_check.classify(_scope({"Origin": EXT})) == ("refuse", "untrusted extension")
+
+
+def test_extension_approves_and_relays(desktop):
+    """Desktop: the popup approves a site, then the relayed requests pass the guard as that site."""
+    via = {"Origin": EXT, "X-Voitta-Via": GOOD}
+    assert desktop.get("/api/workspace/active", headers=via).status_code == 403
+    r = desktop.get("/api/auth/sites/status", params={"origin": GOOD}, headers={"Origin": EXT})
+    assert r.status_code == 200 and r.json()["approved"] is False
+    assert desktop.post("/api/auth/sites/approve", json={"origin": GOOD}, headers={"Origin": EXT}).status_code == 200
+    assert desktop.get("/api/auth/me", headers=via).json()["site"] == {"origin": GOOD, "approved": True, "refused": False}
+    get_via = {"Sec-Fetch-Site": "none", "X-Voitta-Via": GOOD}
+    assert desktop.get("/api/auth/me", headers=get_via).json()["site"]["origin"] == GOOD
+    assert desktop.get("/api/workspace/active", headers=via).status_code != 403
+
+
 def test_public_base_url_is_own(monkeypatch):
     monkeypatch.setenv("VOITTA_PUBLIC_BASE_URL", "https://bookmarklet.voitta.ai/")
     assert site_check.classify(_scope({"Origin": "https://bookmarklet.voitta.ai"}, host="10.0.0.5:12358")) == ("own", None)

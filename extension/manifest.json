@@ -1,0 +1,48 @@
+{
+  "manifest_version": 3,
+  "name": "Voitta",
+  "description": "Opens the Voitta assistant on pages whose Content-Security-Policy blocks the bookmarklet.",
+  "version": "0.1.0",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAphSS6E4SzHUwmSAN0wbVN/CE4bEmjfWFmvnH4t2pQ2wVy5X6eX8fU67BAZqHOI41LWROZOCv4eOEUZMicC97W2Bbg6n8KTIaiw5aWrTF11Zevj1BngXj0oYqqXrDC/9ZSwhJaWtuqGBikMEF4p0acJhPpPwWPd4RnKVHclN75/WaiaUeA4oCpb5aq5Tjc48TMWhrgAP9v7TtOoqETcVxWGYUe6kFZhymfIeiAEafjHAQQDRPj/wublUmYcGCPtyJsaglLUjrplw1mXGXhSJ3mwAAJ/Nvmi/JrHOMOQcoGLtxhI8sPtDqjVxKMZZa4a2GDrgOTIURWOFIJSs0lN7ohQIDAQAB",
+  "minimum_chrome_version": "116",
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "128": "icons/icon-128.png"
+  },
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1/*",
+    "https://127.0.0.1/*",
+    "http://localhost/*",
+    "https://localhost/*"
+  ],
+  "optional_host_permissions": [
+    "https://*/*"
+  ],
+  "background": {
+    "service_worker": "src/sw.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "Open Voitta on this page",
+    "default_popup": "src/popup.html",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "128": "icons/icon-128.png"
+    }
+  },
+  "options_page": "src/options.html",
+  "commands": {
+    "_execute_action": {
+      "suggested_key": {
+        "default": "Alt+Shift+V"
+      }
+    }
+  }
+}
