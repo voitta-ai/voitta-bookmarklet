@@ -27,6 +27,29 @@ The backend trusts the tag only from the extension ID that `manifest.json`'s
 `VOITTA_TRUSTED_EXTENSIONS` to replace it, for example with a Web Store ID, or
 set it empty to trust none.
 
+## browser_eval on these pages
+
+The widget runs in the page's own world, where the page's CSP forbids `eval`,
+so `browser_eval` can't run its scripts there. Under the extension,
+`evalJs` (`frontend/src/lib/primitives.ts`) notices that `eval` is blocked
+and sends the script through the tunnel instead. The worker runs it with
+`chrome.userScripts.execute` in a `USER_SCRIPT` world: same DOM, its own JS
+globals, and a CSP the extension sets (`script-src 'self' 'unsafe-eval'`). The
+script runs only in the document whose relay asked (`documentIds`). The result
+has the same envelope as before, plus `world: "user_script"`.
+
+- Chrome allows this only after the user turns on **Allow User Scripts** on
+  the extension's Details page (Chrome 138+). Until then the tool returns
+  `error: "user_scripts_disabled"`, and its description tells the agent to ask
+  for it.
+- Scripts see the DOM, but not the page's own JavaScript variables
+  (`window.someAppState` is `undefined`).
+- On pages that allow `eval`, nothing changes: scripts still run in the
+  page's world.
+- Any script on the page can use this path too, as it can the network tunnel.
+  That gives the page `eval` inside the user-script world, which its own CSP
+  would otherwise forbid.
+
 ## Build and load
 
 ```sh
@@ -34,7 +57,9 @@ set it empty to trust none.
 ./extension/build.sh --no-frontend   # reuse an existing frontend/dist
 ```
 
-Then chrome://extensions → Developer mode → Load unpacked → `extension/`.
+Then chrome://extensions → Developer mode → Load unpacked → `extension/`, and
+on the extension's Details page turn on **Allow User Scripts** (for
+`browser_eval`).
 Settings (the extension's options page) sets the backend; the default is the
 desktop app's plain-HTTP listener, `http://127.0.0.1:12359`. A backend that
 isn't on loopback needs a host permission, which Save asks for.
@@ -47,8 +72,6 @@ widget bundle has `U+FFFF` literals.
 
 - The widget is bundled into the extension, so it can lag the backend. Rebuild
   and reload the extension after a frontend change.
-- `browser_eval` still can't run on these pages (no `'unsafe-eval'` in the
-  page's world); `read_page` (#35) is the eval-free way to read them.
 - Only the top frame. The tunnel is as trusted as the page: page scripts can
   call the shimmed `fetch`, as with the bridge, and the backend still applies
   the site's approval.

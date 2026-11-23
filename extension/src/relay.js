@@ -14,6 +14,7 @@
   const page = channel.port1;
   const openSockets = new Set();
   const pendingFetches = new Set();
+  const pendingExecs = new Set();
   let port = null;
 
   function bufToB64(buf) {
@@ -44,6 +45,10 @@
       page.postMessage({ v: V, t: "fetch-res", id, error: "voitta: extension restarted" });
     }
     pendingFetches.clear();
+    for (const id of pendingExecs) {
+      page.postMessage({ v: V, t: "exec-res", id, error: "voitta: extension restarted" });
+    }
+    pendingExecs.clear();
   }
 
   function worker() {
@@ -65,6 +70,7 @@
       transfer.push(buf);
     }
     if (d.t === "fetch-res") pendingFetches.delete(d.id);
+    if (d.t === "exec-res") pendingExecs.delete(d.id);
     if (d.t === "ws-event" && d.event === "close") openSockets.delete(d.id);
     page.postMessage(out, transfer);
   }
@@ -85,6 +91,9 @@
       else out.data = d.data;
     } else if (d.t === "ws-close") {
       Object.assign(out, { code: d.code, reason: d.reason });
+    } else if (d.t === "exec") {
+      Object.assign(out, { js: d.js, awaitMs: d.awaitMs });
+      pendingExecs.add(d.id);
     } else {
       return;
     }

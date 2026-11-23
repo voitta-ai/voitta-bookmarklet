@@ -27,6 +27,7 @@
   var queue = [];
   var nextId = 1;
   var pendingFetch = {};
+  var pendingExec = {};
   var wsById = {};
 
   function send(msg, transfer) {
@@ -52,6 +53,11 @@
     } else if (d.t === "ws-event") {
       var s = wsById[d.id];
       if (s) s.__emit(d);
+    } else if (d.t === "exec-res") {
+      var x = pendingExec[d.id];
+      if (!x) return;
+      delete pendingExec[d.id];
+      x(d.envelope || { ok: false, error: "transport", message: d.error || "no result" });
     }
   }
 
@@ -69,6 +75,18 @@
   function isBackend(url) {
     try { return new URL(url, location.href).host === BACKEND_HOST; } catch (_) { return false; }
   }
+
+  // ---- exec ---------------------------------------------------------------
+  // browser_eval on a page whose CSP forbids eval (frontend/src/lib/primitives.ts):
+  // the worker runs the script with chrome.userScripts.execute and resolves to
+  // evalJs's envelope, {ok, result, logs, ms} or {ok: false, error, message, ...}.
+  cfg.exec = function (js, awaitMs) {
+    return new Promise(function (resolve) {
+      var id = nextId++;
+      pendingExec[id] = resolve;
+      send({ t: "exec", id: id, js: String(js), awaitMs: Number(awaitMs) || 30000 });
+    });
+  };
 
   // ---- fetch --------------------------------------------------------------
   var realFetch = window.fetch.bind(window);

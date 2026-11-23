@@ -525,6 +525,26 @@ function readPage(args: Record<string, unknown>): unknown {
   return retval;
 }
 
+// Set by the Voitta Chrome extension's page shim (extension/src/page-shim.js).
+// ``exec`` runs a script through chrome.userScripts in a world the page's CSP
+// doesn't govern, and resolves to the same envelope evalJs returns.
+type VoittaExt = { exec?: (js: string, awaitMs: number) => Promise<unknown> };
+
+let evalAllowed: boolean | null = null;
+
+function pageAllowsEval(): boolean {
+  // Probe once per page: each blocked attempt is reported as a CSP violation.
+  if (evalAllowed === null) {
+    try {
+      (0, eval)("0");
+      evalAllowed = true;
+    } catch (err) {
+      evalAllowed = !(err instanceof EvalError);
+    }
+  }
+  return evalAllowed;
+}
+
 async function evalJs(args: Record<string, unknown>): Promise<unknown> {
   // Evaluate arbitrary JS in the bookmarklet's page context. Wraps the
   // body in an AsyncFunction so ``await`` at top level works and
@@ -534,6 +554,13 @@ async function evalJs(args: Record<string, unknown>): Promise<unknown> {
   const js = String(args?.js ?? "");
   const awaitMs = Number(args?.await_ms ?? 30_000) || 30_000;
   if (!js) return { ok: false, error: "bad_request", message: "js is required" };
+
+  // A page whose CSP forbids eval: under the extension, run the script in a
+  // user-script world instead (same DOM, none of the page's JS globals).
+  const ext = (window as unknown as { __voittaExt?: VoittaExt }).__voittaExt;
+  if (typeof ext?.exec === "function" && !pageAllowsEval()) {
+    return ext.exec(js, awaitMs);
+  }
 
   const logs: { level: string; args: unknown[] }[] = [];
   const wrap = (level: string, orig: (...a: unknown[]) => void) =>
