@@ -1,0 +1,56 @@
+# Temporary: runs the extension-zip step of release.yml on a real runner, with
+# a fake gh, so nothing is uploaded. Removed before the PR is merged.
+name: tmp-extension-zip-test
+
+on:
+  push:
+    branches: [build/extension-release-zip]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+      - name: Run the real step with a fake gh
+        env:
+          STEP_NAME: Build the extension, zip it and attach it to the release
+          VERSION: 9.9.9
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/fake-bin"
+          cat > "$RUNNER_TEMP/fake-bin/gh" <<'EOF'
+          #!/bin/bash
+          echo "gh $*" >> "$GH_LOG"
+          for last in "$@"; do :; done
+          test -f "$last" || { echo "fake gh: no such file: $last" >&2; exit 1; }
+          EOF
+          chmod +x "$RUNNER_TEMP/fake-bin/gh"
+          export GH_LOG="$RUNNER_TEMP/gh.log"
+          export PATH="$RUNNER_TEMP/fake-bin:$PATH"
+
+          yq '.jobs["extension-zip"].steps[] | select(.name == strenv(STEP_NAME)) | .run' \
+            .github/workflows/release.yml > "$RUNNER_TEMP/step.sh"
+          test -s "$RUNNER_TEMP/step.sh"
+          bash --noprofile --norc -eo pipefail "$RUNNER_TEMP/step.sh"
+
+          zip_file="voitta-extension-$VERSION.zip"
+          echo "== tools =="
+          node --version
+          jq --version
+          echo "== gh calls =="
+          cat "$GH_LOG"
+          grep -qx "gh release upload v$VERSION $PWD/$zip_file" "$GH_LOG"
+          echo "== zip =="
+          unzip -l "$zip_file"
+          test "$(unzip -p "$zip_file" voitta-extension/manifest.json | jq -r .version)" = "$VERSION"
+          test "$(unzip -Z1 "$zip_file" | grep -vc '/$')" = "16"
+          test "$(unzip -Z1 "$zip_file" | grep -vc '^voitta-extension/')" = "0"
+          echo "== hashes =="
+          sha256sum frontend/dist/widget.js extension/vendor/widget.js
+          unzip -p "$zip_file" voitta-extension/vendor/widget.js | sha256sum
