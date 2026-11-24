@@ -27,8 +27,13 @@ origin.
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
 import os
 import re
+import secrets
+import time
 from urllib.parse import parse_qs
 
 from app.services.users import normalize_origin
@@ -51,6 +56,47 @@ def trusted_extension_origins() -> set[str]:
         if re.fullmatch(r"[a-p]{32}", x):
             out.add(_EXT_PREFIX + x)
     return out
+
+
+# Frame tickets. The extension's report frame (an extension page) loads a report as an iframe
+# navigation, and Chrome sends neither Origin nor Referer for that, so the request carries no
+# site at all. The frame first gets a ticket through an ordinary tagged request, which the
+# guard only lets through for an approved site, then adds it to the report URL as
+# ?voitta_ticket=. A ticket names the site and the path it is good for, expires, and is signed
+# with a key that lives only in this process (a restart invalidates outstanding tickets).
+TICKET_TTL_S = 600
+_TICKET_KEY = secrets.token_bytes(32)
+
+
+def _ticket_sig(exp: int, site: str, path: str) -> str:
+    msg = f"{exp}|{site}|{path}".encode()
+    return hmac.new(_TICKET_KEY, msg, hashlib.sha256).hexdigest()[:32]
+
+
+def issue_ticket(site: str, path: str, *, now: float | None = None) -> str:
+    exp = int((time.time() if now is None else now) + TICKET_TTL_S)
+    head = base64.urlsafe_b64encode(f"{exp}|{site}".encode()).decode().rstrip("=")
+    return f"{head}.{_ticket_sig(exp, site, path)}"
+
+
+def ticket_site(token: str, path: str, *, now: float | None = None) -> str | None:
+    """The site a valid, unexpired ticket for ``path`` names; else None."""
+    try:
+        head, sig = token.rsplit(".", 1)
+        exp_s, site = base64.urlsafe_b64decode(head + "=" * (-len(head) % 4)).decode().split("|", 1)
+        exp = int(exp_s)
+    except (ValueError, UnicodeDecodeError):
+        return None
+    if exp < (time.time() if now is None else now):
+        return None
+    if not hmac.compare_digest(sig, _ticket_sig(exp, site, path)):
+        return None
+    return normalize_origin(site)
+
+
+def _query(scope, key: str) -> str | None:
+    vals = parse_qs((scope.get("query_string") or b"").decode("latin-1")).get(key)
+    return vals[-1] if vals else None
 
 
 def _headers(scope) -> dict[str, str]:
@@ -81,9 +127,7 @@ def own_origins(scope) -> set[str]:
 def _via(scope, h: dict[str, str]) -> str | None:
     if h.get("x-voitta-via"):
         return h["x-voitta-via"]
-    qs = parse_qs((scope.get("query_string") or b"").decode("latin-1"))
-    vals = qs.get("voitta_via")
-    return vals[-1] if vals else None
+    return _query(scope, "voitta_via")
 
 
 def classify(scope) -> tuple[str, str | None]:
@@ -105,6 +149,10 @@ def classify(scope) -> tuple[str, str | None]:
                 return "refuse", "bad origin"
             same = origin in own
     else:
+        ticket = _query(scope, "voitta_ticket")
+        if ticket is not None:
+            site = ticket_site(ticket, scope.get("path", ""))
+            return ("site", site) if site else ("refuse", "bad ticket")
         sfs = h.get("sec-fetch-site")
         if sfs in ("cross-site", "same-site"):
             ref = normalize_origin(h.get("referer"))

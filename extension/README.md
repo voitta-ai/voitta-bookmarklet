@@ -12,9 +12,12 @@ page (MAIN world)                 content script (ISOLATED)       service worker
 widget.js + src/page-shim.js ── MessagePort ──▶ src/relay.js ── runtime Port ──▶ fetch / WebSocket ──▶ backend
 ```
 
-- `src/page-shim.js` replaces `fetch` and `WebSocket` for backend URLs only, as
-  the bridge's boot shim (`backend/app/bridge.py`) does, and sets bridge mode
-  so socket.io uses WebSockets and images load as `blob:` URLs.
+- `src/page-shim.js` replaces `fetch`, `XMLHttpRequest` and `WebSocket` for
+  backend URLs only, as the bridge's boot shim (`backend/app/bridge.py`) does
+  for the first and last. It sets bridge mode, so socket.io uses WebSockets and
+  images load as `blob:` URLs. Chainlit uploads attachments with XHR; a
+  tunnelled XHR stays a real `XMLHttpRequest` whose events are dispatched on
+  it, and its upload is reported as one 100% progress step.
 - `src/sw.js` makes the requests and tags each with the tab's
   browser-verified origin (`X-Voitta-Via` / `?voitta_via=`), so the backend
   applies that site's approval.
@@ -26,6 +29,26 @@ The backend trusts the tag only from the extension ID that `manifest.json`'s
 (`app.services.site_check.DEFAULT_EXTENSION_IDS`). Set
 `VOITTA_TRUSTED_EXTENSIONS` to replace it, for example with a Web Store ID, or
 set it empty to trust none.
+
+## Reports on these pages
+
+The report pane is an iframe of the backend's `/api/html-report`, which a
+`frame-src` (or `default-src`) without the backend blocks. Under the extension
+the pane frames `src/report-frame.html?u=<report URL>` instead. Chrome lets a
+page frame an extension's web-accessible page whatever its CSP. That page
+frames the report and relays `postMessage` both ways, so the report and
+`screenshot_report` work unchanged.
+
+Chrome sends neither `Origin` nor `Referer` when an extension page loads an
+iframe, so the report request can't say which site it's for. The frame first
+asks `POST /api/html-report/ticket` with `X-Voitta-Via: <embedding site>`
+(`location.ancestorOrigins[0]`); the guard lets that through only for an
+approved site. It then loads the report with `?voitta_ticket=`. A ticket is an
+HMAC over the site, the path and an expiry (10 minutes), with a key held in
+memory (`app.services.site_check.issue_ticket`).
+
+Listing `report-frame.html` as web-accessible lets any site detect that the
+extension is installed by trying to load it.
 
 ## browser_eval on these pages
 

@@ -43,8 +43,8 @@ async function launch(tabId) {
   // port, and both must exist before the widget makes its first request (the
   // shim queues requests until the port arrives).
   await inject(tabId, "MAIN", {
-    func: (b, n) => { window.__voittaExt = { backend: b, nonce: n }; },
-    args: [backend, nonce],
+    func: (b, n, f) => { window.__voittaExt = { backend: b, nonce: n, reportFrame: f }; },
+    args: [backend, nonce, chrome.runtime.getURL("src/report-frame.html")],
   });
   await inject(tabId, "MAIN", { files: ["src/page-shim.js"] });
   await inject(tabId, "ISOLATED", {

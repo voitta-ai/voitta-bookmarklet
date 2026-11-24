@@ -17,12 +17,13 @@ body (the cache holds 64 renders), in which case both routes answer
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, Response
 
 from app.reports.export import build_zip, zip_filename
 from app.reports.renderers.html import get_cached
 from app.reports.slug import InvalidSlug, validate_slug
+from app.services import site_check
 
 router = APIRouter(prefix="/api")
 
@@ -42,6 +43,16 @@ def _lookup(id: str, render_id: str) -> str:
             f"— re-run the script",
         )
     return body
+
+
+@router.post("/html-report/ticket")
+async def html_report_ticket(request: Request) -> dict:
+    """A frame ticket for ``/api/html-report`` (see ``site_check.issue_ticket``). The guard has
+    already checked that the calling site is approved; own pages and tools need no ticket."""
+    kind, origin = site_check.classify(request.scope)
+    if kind != "site" or not origin:
+        raise HTTPException(status_code=400, detail="Only a site needs a report ticket.")
+    return {"ticket": site_check.issue_ticket(origin, "/api/html-report"), "ttl_s": site_check.TICKET_TTL_S}
 
 
 @router.get("/html-report", response_class=HTMLResponse)

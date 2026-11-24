@@ -97,6 +97,36 @@ def test_trusted_extensions_env(monkeypatch):
     assert site_check.classify(_scope({"Origin": EXT})) == ("refuse", "untrusted extension")
 
 
+def _report_scope(query: str) -> dict:
+    s = _scope({"Sec-Fetch-Site": "cross-site", "Sec-Fetch-Dest": "iframe"}, query=query)
+    s["path"] = "/api/html-report"
+    return s
+
+
+def test_frame_ticket():
+    t = site_check.issue_ticket(GOOD, "/api/html-report")
+    assert site_check.ticket_site(t, "/api/html-report") == GOOD
+    assert site_check.ticket_site(t, "/api/other") is None                       # bound to its path
+    assert site_check.ticket_site(t, "/api/html-report", now=10**12) is None     # expired
+    head, sig = t.rsplit(".", 1)
+    forged = site_check.issue_ticket(EVIL, "/api/html-report").rsplit(".", 1)[0] + "." + sig
+    assert site_check.ticket_site(forged, "/api/html-report") is None             # signature covers the site
+    assert site_check.classify(_report_scope("voitta_ticket=" + t)) == ("site", GOOD)
+    assert site_check.classify(_report_scope("voitta_ticket=junk")) == ("refuse", "bad ticket")
+    # Without a ticket, the extension frame's navigation (no Origin, no Referer) stays refused.
+    assert site_check.classify(_report_scope("voitta_via=" + GOOD))[0] == "refuse"
+
+
+def test_report_ticket_route(desktop):
+    via = {"Origin": EXT, "X-Voitta-Via": GOOD}
+    assert desktop.post("/api/html-report/ticket", headers=via).status_code == 403     # not approved yet
+    assert desktop.post("/api/auth/sites/approve", json={"origin": GOOD}, headers={"Origin": EXT}).status_code == 200
+    r = desktop.post("/api/html-report/ticket", headers=via)
+    assert r.status_code == 200
+    assert site_check.ticket_site(r.json()["ticket"], "/api/html-report") == GOOD
+    assert desktop.post("/api/html-report/ticket", headers={"Origin": EXT}).status_code == 400  # own page
+
+
 def test_extension_approves_and_relays(desktop):
     """Desktop: the popup approves a site, then the relayed requests pass the guard as that site."""
     via = {"Origin": EXT, "X-Voitta-Via": GOOD}

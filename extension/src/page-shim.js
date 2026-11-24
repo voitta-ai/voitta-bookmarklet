@@ -1,6 +1,6 @@
 // Page shim (MAIN world), injected by sw.js before widget.js.
 //
-// Replaces window.fetch and window.WebSocket for requests to the Voitta
+// Replaces fetch, XMLHttpRequest and WebSocket for requests to the Voitta
 // backend only, carrying them over a MessagePort to relay.js. Everything else
 // goes to the page's own implementations untouched.
 //
@@ -108,6 +108,123 @@
         send({ t: "fetch", id: id, url: req.url, method: req.method, headers: headers,
                body: hasBody ? buf : null }, hasBody ? [buf] : []);
       });
+    });
+  };
+
+  // ---- XMLHttpRequest -----------------------------------------------------
+  // Chainlit uploads attachments with XHR (for progress events), which
+  // connect-src blocks like fetch. A backend-bound XHR is carried by the fetch
+  // shim above. The object stays a real XMLHttpRequest, so its on* handlers
+  // and listeners fire through its own dispatchEvent; its state is served by
+  // per-instance properties.
+  var XP = XMLHttpRequest.prototype;
+  var realOpen = XP.open, realSend = XP.send, realSetHeader = XP.setRequestHeader,
+      realAbort = XP.abort, realGetHeader = XP.getResponseHeader, realGetAll = XP.getAllResponseHeaders;
+
+  function fire(target, type, init) {
+    try { target.dispatchEvent(new ProgressEvent(type, init || {})); } catch (e) { console.error("[voitta-ext]", e); }
+  }
+  function xhrText(vt) { return vt.text != null ? vt.text : (vt.text = vt.buf ? new TextDecoder().decode(vt.buf) : ""); }
+  var XHR_PROPS = {
+    readyState: function (vt) { return vt.readyState; },
+    status: function (vt) { return vt.status; },
+    statusText: function (vt) { return vt.statusText; },
+    responseURL: function (vt) { return vt.readyState === 4 ? vt.responseURL : ""; },
+    responseText: function (vt) { return vt.readyState === 4 ? xhrText(vt) : ""; },
+    response: function (vt, xhr) {
+      if (vt.readyState !== 4 || !vt.buf) return xhr.responseType === "" || xhr.responseType === "text" ? "" : null;
+      switch (xhr.responseType) {
+        case "json": try { return JSON.parse(xhrText(vt)); } catch (_) { return null; }
+        case "arraybuffer": return vt.buf;
+        case "blob": return new Blob([vt.buf], { type: vt.resHeaders.get("content-type") || "" });
+        case "document": return null;
+        default: return xhrText(vt);
+      }
+    },
+  };
+  function setState(xhr, n) {
+    xhr.__vt.readyState = n;
+    fire(xhr, "readystatechange");
+  }
+
+  XP.open = function (method, url) {
+    if (!isBackend(String(url))) {
+      delete this.__vt;
+      return realOpen.apply(this, arguments);
+    }
+    var xhr = this;
+    if (!xhr.__vt) {
+      Object.keys(XHR_PROPS).forEach(function (k) {
+        Object.defineProperty(xhr, k, { configurable: true, get: function () { return XHR_PROPS[k](xhr.__vt, xhr); } });
+      });
+    }
+    xhr.__vt = { method: String(method).toUpperCase(), url: new URL(String(url), location.href).href,
+                 headers: {}, readyState: 0, status: 0, statusText: "", aborted: false };
+    setState(xhr, 1);
+  };
+  XP.setRequestHeader = function (k, v) {
+    if (!this.__vt) return realSetHeader.apply(this, arguments);
+    this.__vt.headers[k] = v;
+  };
+  XP.getResponseHeader = function (k) {
+    if (!this.__vt) return realGetHeader.apply(this, arguments);
+    return this.__vt.resHeaders ? this.__vt.resHeaders.get(k) : null;
+  };
+  XP.getAllResponseHeaders = function () {
+    if (!this.__vt) return realGetAll.apply(this, arguments);
+    var out = "";
+    if (this.__vt.resHeaders) this.__vt.resHeaders.forEach(function (v, k) { out += k + ": " + v + "\r\n"; });
+    return out;
+  };
+  XP.abort = function () {
+    var vt = this.__vt;
+    if (!vt) return realAbort.apply(this, arguments);
+    if (vt.aborted || vt.readyState === 4 || vt.readyState === 0) return;
+    vt.aborted = true;
+    vt.status = 0;
+    setState(this, 4);
+    fire(this, "abort");
+    fire(this, "loadend");
+    vt.readyState = 0;
+  };
+  XP.send = function (body) {
+    var vt = this.__vt;
+    if (!vt) return realSend.apply(this, arguments);
+    var xhr = this;
+    var init = { method: vt.method, headers: vt.headers, credentials: xhr.withCredentials ? "include" : "same-origin" };
+    if (body != null && vt.method !== "GET" && vt.method !== "HEAD") init.body = body;
+    var hasUpload = !!init.body;
+    fire(xhr, "loadstart");
+    if (hasUpload) fire(xhr.upload, "loadstart");
+    window.fetch(vt.url, init).then(function (r) {
+      return r.arrayBuffer().then(function (buf) {
+        if (vt.aborted) return;
+        // The tunnel moves the body in one piece: report the upload as done.
+        if (hasUpload) {
+          ["progress", "load", "loadend"].forEach(function (t) {
+            fire(xhr.upload, t, { lengthComputable: true, loaded: 1, total: 1 });
+          });
+        }
+        vt.status = r.status;
+        vt.statusText = r.statusText;
+        vt.responseURL = r.url || vt.url;
+        vt.resHeaders = r.headers;
+        vt.buf = buf;
+        setState(xhr, 2);
+        setState(xhr, 3);
+        setState(xhr, 4);
+        var n = buf.byteLength;
+        fire(xhr, "progress", { lengthComputable: true, loaded: n, total: n });
+        fire(xhr, "load", { lengthComputable: true, loaded: n, total: n });
+        fire(xhr, "loadend", { lengthComputable: true, loaded: n, total: n });
+      });
+    }).catch(function () {
+      if (vt.aborted) return;
+      vt.status = 0;
+      setState(xhr, 4);
+      if (hasUpload) { fire(xhr.upload, "error"); fire(xhr.upload, "loadend"); }
+      fire(xhr, "error");
+      fire(xhr, "loadend");
     });
   };
 
