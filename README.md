@@ -109,16 +109,22 @@ bookmarklet. The bridge port, 12359, stays plain HTTP by design.
 Some pages refuse both bookmarklets: their Content-Security-Policy blocks the
 standard bookmarklet's script and the `eval` that the bridge bookmarklet
 needs. On such a page a click on the bookmarklet shows no assistant. The
-Chrome extension in `extension/` opens the same assistant there. It needs
-Chrome 135 or later and, for now, a checkout of this repo (with Node.js 20+)
-at the version your backend runs:
+Chrome extension opens the same assistant there. It needs Chrome 135 or
+later. Get it at the version your backend runs, in one of two ways:
 
-```bash
-./extension/build.sh        # builds the widget into extension/
-```
+- Download `voitta-extension-X.Y.Z.zip` from that version's
+  [release](https://github.com/voitta-ai/voitta-bookmarklet/releases) and
+  unzip it. It holds one folder, `voitta-extension/`. Releases after 0.3.0
+  have it.
+- Or build it in a checkout of this repo (with Node.js 20+):
+
+  ```bash
+  ./extension/build.sh        # builds the widget into extension/
+  ```
 
 1. Open `chrome://extensions`, turn on **Developer mode**, click **Load
-   unpacked** and select the `extension/` folder. The card should show the ID
+   unpacked** and select the folder: `voitta-extension/` from the zip, or
+   `extension/` in the checkout. The card should show the ID
    `cgcipboiieipdcbonhefjcgcikliboic`, the one the backend trusts by default.
 2. On that card, click **Details** and turn on **Allow User Scripts**. The
    assistant needs it to act on such a page (click, type). Reading the page
@@ -134,8 +140,10 @@ tried with a shared server yet.
 
 If the panel opens but its status dot stays grey and messages get no reply,
 the backend is older than the extension: upgrade it. After you upgrade Voitta,
-run `./extension/build.sh` again and click reload on the extension's card,
-because the extension carries its own copy of the widget.
+bring the extension to the same version, because it carries its own copy of
+the widget: replace the `voitta-extension/` folder, in the same place, with
+the one from the new release's zip, or run `./extension/build.sh` again. Then
+click reload on the extension's card.
 [`extension/README.md`](extension/README.md) has the details and the limits.
 
 ## Other ways to run it
