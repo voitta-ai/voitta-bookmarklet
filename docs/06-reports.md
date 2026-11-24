@@ -110,6 +110,21 @@ The HTML is served at `/api/html-report?id=<slug>` and rendered in a same-origin
 If you need a **PDF file** as a deliverable, build it directly with `fpdf2` —
 see [`08-pdf-export.md`](08-pdf-export.md).
 
+### Saving a report to a file (export, download)
+
+This is built in. The report pane's tab bar has a download button, "Download as
+self-contained web page (.zip)". The zip holds the page as `index.html` and a
+`README.txt`. When the user asks to save, export or download a report, point
+them to that button. Don't build a download button into the report.
+
+If a report has to offer a file itself, link it as a `data:` URI. A `blob:` URL
+from `URL.createObjectURL` did not start a download in the report frame under
+the Chrome extension (seen 2026-11-24).
+
+The report pane belongs to Voitta's panel, not to the page. `browser_eval` and
+`read_page` work on the host page and cannot reach the report's iframe: use
+`get_active_report`, `get_script` and `screenshot_report`.
+
 ## Script kinds & effects
 
 Every script carries a declared **kind** and observed **effects** in its meta:
