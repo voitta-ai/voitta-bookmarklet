@@ -12,6 +12,7 @@ Anthropic, OpenAI, Gemini or Requesty API key, or a Claude subscription.
   - [Install the bookmarklet](#install-the-bookmarklet)
   - [Choose a model](#choose-a-model)
   - [Optional: HTTPS for the standard bookmarklet](#optional-https-for-the-standard-bookmarklet)
+  - [Chrome extension, for pages that block both bookmarklets](#chrome-extension-for-pages-that-block-both-bookmarklets)
 - [Other ways to run it](#other-ways-to-run-it)
   - [From source (macOS or Linux)](#from-source-macos-or-linux)
   - [macOS menu-bar app](#macos-menu-bar-app)
@@ -23,7 +24,7 @@ Anthropic, OpenAI, Gemini or Requesty API key, or a Claude subscription.
   - [Layout](#layout)
   - [lib-sources: vendored libraries](#lib-sources-vendored-libraries)
   - [RAG](#rag)
-  - [MCP debugging](#mcp-debugging)
+  - [MCP endpoint](#mcp-endpoint)
   - [Docs](#docs)
   - [Tests](#tests)
 - [License](#license)
@@ -66,7 +67,9 @@ the one you need to your bookmarks bar:
   page. Browsers block a web page from loading scripts from `http://127.0.0.1`,
   so this one needs [HTTPS](#optional-https-for-the-standard-bookmarklet).
 
-Click the bookmarklet on any page. The assistant panel opens beside it.
+Click the bookmarklet on any page. The assistant panel opens beside it. If
+neither bookmarklet opens it on some page, use the
+[Chrome extension](#chrome-extension-for-pages-that-block-both-bookmarklets).
 
 ### Choose a model
 
@@ -100,6 +103,40 @@ docker run -d --name voitta-bookmarklet --restart unless-stopped \
 The backend then serves `https://127.0.0.1:12358`. Open
 <https://127.0.0.1:12358/bookmarklets> again and drag the standard
 bookmarklet. The bridge port, 12359, stays plain HTTP by design.
+
+### Chrome extension, for pages that block both bookmarklets
+
+Some pages refuse both bookmarklets: their Content-Security-Policy blocks the
+standard bookmarklet's script and the `eval` that the bridge bookmarklet
+needs. On such a page a click on the bookmarklet shows no assistant. The
+Chrome extension in `extension/` opens the same assistant there. It needs
+Chrome 135 or later and, for now, a checkout of this repo (with Node.js 20+)
+at the version your backend runs:
+
+```bash
+./extension/build.sh        # builds the widget into extension/
+```
+
+1. Open `chrome://extensions`, turn on **Developer mode**, click **Load
+   unpacked** and select the `extension/` folder. The card should show the ID
+   `cgcipboiieipdcbonhefjcgcikliboic`, the one the backend trusts by default.
+2. On that card, click **Details** and turn on **Allow User Scripts**. The
+   assistant needs it to act on such a page (click, type). Reading the page
+   works without it.
+3. Open the page, click the **Voitta** icon in the toolbar, and click
+   **Allow** the first time on a site.
+
+The extension talks to `http://127.0.0.1:12359`, the plain-HTTP port that the
+Docker quick start and `./start.sh` serve. To use another address, right-click
+the Voitta icon and choose **Options**. That page is the extension's own: the
+backend address is not in the assistant's Settings. The extension has not been
+tried with a shared server yet.
+
+If the panel opens but its status dot stays grey and messages get no reply,
+the backend is older than the extension: upgrade it. After you upgrade Voitta,
+run `./extension/build.sh` again and click reload on the extension's card,
+because the extension carries its own copy of the widget.
+[`extension/README.md`](extension/README.md) has the details and the limits.
 
 ## Other ways to run it
 
@@ -223,6 +260,7 @@ voitta-bookmarklet/
 ├── backend/          FastAPI + Chainlit, agent loop, tool registry
 ├── frontend/         Vite IIFE bundle, React widget, primitives
 ├── plugins/          Host-scoped extensions (manifest + BE module + FE widget + docs + prompt)
+├── extension/        Chrome extension for pages whose CSP blocks both bookmarklets
 ├── docs/             *** MASTER COPY of all prose docs ***
 ├── lib-sources/      Vendored libraries as git submodules (see below)
 ├── rag/              Built RAG indexes (gitignored, rebuildable)

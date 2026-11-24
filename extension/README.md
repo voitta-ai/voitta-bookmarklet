@@ -83,9 +83,12 @@ has the same envelope as before, plus `world: "user_script"`.
 Then chrome://extensions → Developer mode → Load unpacked → `extension/`, and
 on the extension's Details page turn on **Allow User Scripts** (for
 `browser_eval`).
-Settings (the extension's options page) sets the backend; the default is the
-desktop app's plain-HTTP listener, `http://127.0.0.1:12359`. A backend that
-isn't on loopback needs a host permission, which Save asks for.
+The backend is set on the extension's options page: right-click the toolbar
+icon and choose **Options**. It is not in the assistant panel's Settings, and
+the popup's "Settings" link is hard to reach, because the popup closes as soon
+as it has launched the widget. The default is the desktop app's plain-HTTP
+listener, `http://127.0.0.1:12359`. A backend that isn't on loopback needs a
+host permission, which Save asks for.
 
 `build.sh` re-emits the bundle with non-ASCII characters escaped:
 `chrome.scripting` refuses a file that contains Unicode noncharacters, and the
