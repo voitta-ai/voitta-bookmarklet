@@ -10,6 +10,9 @@ native-library/font breakage in the sandbox). Build the document directly with
 
 When you need a PDF as a **deliverable file**, that's the only supported route.
 
+Saving a report as a web page needs none of this: the report pane's download
+button exports it as a `.zip` (see [`06-reports.md`](06-reports.md)).
+
 > **Exporting an existing report to PDF?** See the field-tested recipe in
 > [`recipes/pdf-report.md`](recipes/pdf-report.md) — vector SVG embedding
 > (gradients included), which engines actually work in the sandbox

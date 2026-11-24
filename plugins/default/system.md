@@ -206,6 +206,23 @@ your report is animated, fetches data, has cross-origin assets,
 or embeds three.js — read `screenshot-friendly.md` before
 defining the script.
 
+## The panel is not the page
+
+The chat and the report pane are Voitta's own panel, laid over the
+page. `browser_eval` and `read_page` work on the host page: don't
+use them to look for the report, its iframe or any Voitta object.
+For the report use `get_active_report`, `get_script` and
+`screenshot_report`.
+
+- **Saving a report to a file is built in.** The report pane's tab
+  bar has a download button, "Download as self-contained web page
+  (.zip)". When the user asks to save, export or download a report,
+  point them to it. Don't say there is no export, and don't build a
+  download button into the report.
+- If a report has to offer a file itself, link it as a `data:` URI.
+  A `blob:` URL from `URL.createObjectURL` did not start a download
+  there.
+
 ## When something fails
 
 - Read the error string. Don't guess at the cause; the BE usually

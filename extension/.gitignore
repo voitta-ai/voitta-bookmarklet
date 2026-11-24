@@ -1,0 +1,5 @@
+vendor/
+icons/
+*.zip
+*.crx
+*.pem

@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Voitta settings</title>
+<link rel="stylesheet" href="popup.css">
+<style>body { width: auto; max-width: 480px; } label { display: block; margin: 10px 0 4px; }</style>
+</head>
+<body>
+  <h1>Voitta settings</h1>
+  <label for="backend">Voitta backend</label>
+  <input id="backend" spellcheck="false">
+  <p>Desktop app: <code>http://127.0.0.1:12359</code>. Shared server: its public address, for example
+    <code>https://bookmarklet.voitta.ai</code>.</p>
+  <div id="ask"><button id="save" class="primary" type="button">Save</button></div>
+  <p id="status"></p>
+  <script type="module" src="options.js"></script>
+</body>
+</html>

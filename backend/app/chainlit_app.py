@@ -439,6 +439,12 @@ async def on_window_message(message: str) -> None:
         pass
 
 
+_EMPTY_MESSAGE_NOTICE = (
+    "⚠️ Nothing to send: the message was empty. If you attached a file, its upload didn't "
+    "finish; attach it again."
+)
+
+
 @cl.on_message
 async def on_message(user_msg: cl.Message) -> None:
     """One user turn → agent loop → streamed Chainlit primitives."""
@@ -467,6 +473,13 @@ async def _run_message_turn(user_msg: cl.Message, email: str | None) -> None:
     # path below stays byte-for-byte unchanged.
     from app.services.agent_sdk import BRAIN_PROVIDER
 
+    # No text and no attachment, typically because an upload failed and the chat sent the
+    # message anyway. There is nothing to answer, and an empty text block is a 400 from the
+    # providers ("text blocks cannot have empty text").
+    if not (user_msg.content or "").strip() and not user_msg.elements:
+        await cl.Message(content=_EMPTY_MESSAGE_NOTICE).send()
+        return
+
     fresh_top = load_user_settings()
     if fresh_top.get("provider") == BRAIN_PROVIDER:
         await _run_agent_sdk_turn(user_msg, email, fresh_top)
@@ -485,8 +498,16 @@ async def _run_message_turn(user_msg: cl.Message, email: str | None) -> None:
         if block is not None:
             content.append(block)
     # An image sent with no text gets no text block: providers reject an empty one.
-    if (user_msg.content or "").strip() or not content:
+    if (user_msg.content or "").strip():
         content.append({"type": "text", "text": user_msg.content})
+    if not content:
+        # Only attachments this path can't read (it reads images only), and no text.
+        names = ", ".join(getattr(el, "name", None) or "attachment" for el in user_msg.elements or [])
+        await cl.Message(content=(
+            f"⚠️ Nothing to send: this chat can't read {names or 'that attachment'} (only images), "
+            "and the message has no text. Add a line of text describing what you need."
+        )).send()
+        return
 
     messages.append(LlmMessage(role="user", content=content))
 

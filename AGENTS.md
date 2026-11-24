@@ -79,6 +79,9 @@ replace the widget. To test the old-widget case (`stale_widget`), build
   `docs/` and `prompt.md`. Plugin frontends are bundled into `widget.js`.
 - `src/voitta_bookmarklet/`: the macOS `.app` launcher. Its briefcase config is
   the repo-root `pyproject.toml`.
+- `extension/`: the Chrome extension for pages whose CSP blocks both
+  bookmarklets. `extension/build.sh` copies in the built `widget.js`; see
+  `extension/README.md`.
 - `backend/app/bookmarklets.py` is the only place the bookmarklet JS is written.
   The tray menu and the `/bookmarklets` page both call it.
 

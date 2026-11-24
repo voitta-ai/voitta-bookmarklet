@@ -23,11 +23,18 @@ interface Props {
 export default function HtmlPane({ backendOrigin, payload }: Props) {
   const setLoading = useSetRecoilState(reportLoadingState);
   const src = useMemo(() => {
+    let url: string;
     try {
-      return new URL(payload.url, backendOrigin).toString();
+      url = new URL(payload.url, backendOrigin).toString();
     } catch {
-      return backendOrigin + payload.url;
+      url = backendOrigin + payload.url;
     }
+    // Under the Voitta Chrome extension, frame its relay page instead: a page
+    // whose CSP has no frame-src for the backend blocks the report's iframe,
+    // but not an extension's page (extension/src/report-frame.js).
+    const reportFrame = (window as unknown as { __voittaExt?: { reportFrame?: string } })
+      .__voittaExt?.reportFrame;
+    return reportFrame ? `${reportFrame}?u=${encodeURIComponent(url)}` : url;
   }, [backendOrigin, payload.url]);
 
   return (
