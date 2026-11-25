@@ -80,6 +80,11 @@ has the same envelope as before, plus `world: "user_script"`.
 ./extension/build.sh --no-frontend   # reuse an existing frontend/dist
 ```
 
+Without a checkout: each GitHub release after 0.3.0 carries the built
+extension as `voitta-extension-X.Y.Z.zip`. It holds one folder,
+`voitta-extension/`, with the release's version in its manifest; load that
+folder instead of `extension/`.
+
 Then chrome://extensions → Developer mode → Load unpacked → `extension/`, and
 on the extension's Details page turn on **Allow User Scripts** (for
 `browser_eval`).

@@ -169,3 +169,33 @@ jobs:
           else
             echo "::notice::v$newest is newer than v$VERSION; :latest is left alone."
           fi
+
+  # The Chrome extension, for people without a checkout: built from the commit
+  # the image is built from and attached to the GitHub release as
+  # voitta-extension-X.Y.Z.zip. The zip holds one folder, voitta-extension/, to
+  # load unpacked. The release version goes into the zip's manifest only.
+  extension-zip:
+    needs: tag-and-release
+    if: needs.tag-and-release.outputs.released == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20 # as in the Dockerfile's frontend stage
+      - name: Build the extension, zip it and attach it to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.tag-and-release.outputs.version }}
+        run: |
+          set -euo pipefail
+          ./extension/build.sh
+          stage="$RUNNER_TEMP/voitta-extension"
+          mkdir "$stage"
+          cp -R extension/src extension/icons extension/vendor "$stage/"
+          jq --arg v "$VERSION" '.version = $v' extension/manifest.json > "$stage/manifest.json"
+          asset="$PWD/voitta-extension-$VERSION.zip"
+          (cd "$RUNNER_TEMP" && zip -qr "$asset" voitta-extension)
+          gh release upload "v$VERSION" "$asset"

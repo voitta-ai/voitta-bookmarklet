@@ -109,6 +109,11 @@ replace the widget. To test the old-widget case (`stale_widget`), build
   minutes (2026-11-15). A second job, `latest-tag`, then moves `:latest` to that
   image only if `vX.Y.Z` is still the newest tag, so releases cut close together
   cannot move `:latest` backwards.
+- The same push attaches the built Chrome extension to the GitHub release as
+  `voitta-extension-X.Y.Z.zip` (job `extension-zip`): one folder,
+  `voitta-extension/`, to load unpacked. The job writes the release version
+  into the zip's manifest; `extension/manifest.json` in git keeps its own,
+  hand-set version.
 - The build keeps its layers in the GitHub Actions cache. The dependency layer
   is rebuilt only when `backend/pyproject.toml` changes: in the `Dockerfile`,
   keep `COPY backend/app` after the dependency install, or every code change
